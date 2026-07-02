@@ -1,0 +1,220 @@
+{
+  "type": "NavigationStack",
+  "content": {
+    "type": "VStack",
+    "properties": {
+      "spacing": 0,
+      "frame": {
+        "minWidth": 640,
+        "minHeight": 520,
+        "idealWidth": 780,
+        "idealHeight": 640,
+        "maxWidth": "infinity",
+        "maxHeight": "infinity"
+      }
+    },
+    "toolbar": [
+      {
+        "type": "ToolbarItemGroup",
+        "id": 90,
+        "properties": { "placement": "navigation" },
+        "children": [
+          {
+            "type": "Button",
+            "id": 30,
+            "properties": {
+              "title": "Notarize",
+              "systemImage": "checkmark.seal",
+              "actionID": "Notarize.run",
+              "disabled": true,
+              "help": "Sign, submit, wait, staple, and package the app for distribution"
+            }
+          },
+          {
+            "type": "Menu",
+            "id": 31,
+            "properties": {
+              "title": "Steps",
+              "disabled": true,
+              "help": "Run an individual step"
+            },
+            "label": {
+              "type": "Label",
+              "properties": { "title": "Steps", "systemImage": "ellipsis.circle" }
+            },
+            "children": [
+              { "type": "Button", "id": 311, "properties": { "title": "Sign for Release", "systemImage": "signature", "actionID": "Notarize.sign" } },
+              { "type": "Button", "id": 312, "properties": { "title": "Check Signature", "systemImage": "magnifyingglass", "actionID": "Notarize.check" } },
+              { "type": "Button", "id": 313, "properties": { "title": "Submit and Wait", "systemImage": "arrow.up.circle", "actionID": "Notarize.submit" } },
+              { "type": "Button", "id": 314, "properties": { "title": "Fetch Last Log", "systemImage": "doc.text", "actionID": "Notarize.log" } },
+              { "type": "Button", "id": 315, "properties": { "title": "Staple Ticket", "systemImage": "paperclip", "actionID": "Notarize.staple" } },
+              { "type": "Button", "id": 316, "properties": { "title": "Validate Result", "systemImage": "checkmark.shield", "actionID": "Notarize.validate" } }
+            ]
+          },
+          {
+            "type": "Button",
+            "id": 32,
+            "properties": {
+              "title": "Cancel",
+              "systemImage": "stop.circle",
+              "actionID": "Notarize.cancel",
+              "disabled": true,
+              "help": "Stop the current operation"
+            }
+          },
+          {
+            "type": "Button",
+            "id": 33,
+            "properties": {
+              "title": "Credentials",
+              "systemImage": "key",
+              "actionID": "Notarize.creds.open",
+              "help": "Set up notary service credentials"
+            }
+          }
+        ]
+      }
+    ],
+    "children": [
+      {
+        "type": "VStack",
+        "id": 21,
+        "properties": {
+          "spacing": 10,
+          "alignment": "leading",
+          "padding": "default",
+          "onDropTypes": ["public.file-url"],
+          "onDropActionID": "Notarize.drop",
+          "frame": { "maxWidth": "infinity", "maxHeight": "infinity" }
+        },
+        "children": [
+          {
+            "type": "GroupBox",
+            "properties": { "title": "Application", "frame": { "maxWidth": "infinity" } },
+            "children": [
+              {
+                "type": "HStack",
+                "properties": { "spacing": 8 },
+                "children": [
+                  {
+                    "type": "Text",
+                    "id": 40,
+                    "properties": {
+                      "text": "No app chosen - drop a .app here or click Choose App.",
+                      "font": { "size": 11, "design": "monospaced" },
+                      "foregroundStyle": "secondary",
+                      "frame": { "maxWidth": "infinity", "alignment": "leading" }
+                    }
+                  },
+                  {
+                    "type": "Button",
+                    "id": 41,
+                    "properties": {
+                      "title": "Choose App...",
+                      "actionID": "Notarize.choose.app",
+                      "help": "Choose a .app bundle to notarize"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "GroupBox",
+            "properties": { "title": "Settings", "frame": { "maxWidth": "infinity" } },
+            "children": [
+              {
+                "type": "VStack",
+                "properties": { "alignment": "leading", "spacing": 8 },
+                "children": [
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 8 },
+                    "children": [
+                      { "type": "Text", "properties": { "text": "Signing identity", "foregroundStyle": "secondary", "frame": { "width": 130, "alignment": "trailing" } } },
+                      { "type": "Picker", "id": 50, "properties": { "title": "", "pickerStyle": "menu", "options": [], "frame": { "maxWidth": "infinity" } } }
+                    ]
+                  },
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 8 },
+                    "children": [
+                      { "type": "Text", "properties": { "text": "Credential profile", "foregroundStyle": "secondary", "frame": { "width": 130, "alignment": "trailing" } } },
+                      { "type": "Picker", "id": 51, "properties": { "title": "", "pickerStyle": "menu", "options": [], "frame": { "maxWidth": "infinity" } } }
+                    ]
+                  },
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 8 },
+                    "children": [
+                      { "type": "Text", "properties": { "text": "Entitlements", "foregroundStyle": "secondary", "frame": { "width": 130, "alignment": "trailing" } } },
+                      { "type": "TextField", "id": 52, "properties": { "text": "", "prompt": "Optional .entitlements file", "font": { "size": 11, "design": "monospaced" }, "frame": { "maxWidth": "infinity" } } },
+                      { "type": "Button", "id": 53, "properties": { "title": "Browse...", "actionID": "Notarize.choose.entitlements" } }
+                    ]
+                  },
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 8 },
+                    "children": [
+                      { "type": "Text", "properties": { "text": "Output folder", "foregroundStyle": "secondary", "frame": { "width": 130, "alignment": "trailing" } } },
+                      { "type": "TextField", "id": 54, "properties": { "text": "", "prompt": "Defaults to the app's folder", "font": { "size": 11, "design": "monospaced" }, "frame": { "maxWidth": "infinity" } } },
+                      { "type": "Button", "id": 55, "properties": { "title": "Browse...", "actionID": "Notarize.choose.output" } }
+                    ]
+                  },
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 16 },
+                    "children": [
+                      { "type": "Toggle", "id": 56, "properties": { "title": "Sign for release first" } },
+                      { "type": "Toggle", "id": 57, "properties": { "title": "Staple ticket" } },
+                      { "type": "Toggle", "id": 58, "properties": { "title": "Create distribution zip" } }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "GroupBox",
+            "properties": { "title": "Progress", "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
+            "children": [
+              {
+                "type": "VStack",
+                "properties": { "spacing": 6, "frame": { "maxWidth": "infinity", "maxHeight": "infinity" } },
+                "children": [
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 8 },
+                    "children": [
+                      { "type": "Text", "id": 60, "properties": { "text": "Drop an app to notarize, or choose one.", "font": "footnote", "foregroundStyle": "secondary", "frame": { "maxWidth": "infinity", "alignment": "leading" } } },
+                      { "type": "ProgressView", "id": 61, "properties": { "controlSize": "small", "hidden": true } }
+                    ]
+                  },
+                  {
+                    "type": "TextEditor",
+                    "id": 62,
+                    "properties": {
+                      "readOnly": true,
+                      "font": { "size": 11, "design": "monospaced" },
+                      "background": "background.secondary",
+                      "scrollContentBackground": "hidden",
+                      "frame": { "minHeight": 200, "maxWidth": "infinity", "maxHeight": "infinity" }
+                    }
+                  },
+                  {
+                    "type": "HStack",
+                    "properties": { "spacing": 8 },
+                    "children": [
+                      { "type": "Spacer" },
+                      { "type": "Button", "id": 63, "properties": { "title": "Reveal in Finder", "systemImage": "magnifyingglass", "actionID": "Notarize.reveal", "hidden": true } }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

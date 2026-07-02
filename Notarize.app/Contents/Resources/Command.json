@@ -1,0 +1,150 @@
+{
+  "COMMAND_LIST": [
+    {
+      "NAME": "Notarize",
+      "ACTIVATION_MODE": "act_file_or_folder",
+      "EXECUTION_MODE": "exe_script_file",
+      "OPEN_OBJECT_DIALOG": {
+        "MESSAGE": "Choose an app to notarize",
+        "ALLOWED_CONTENT_TYPES": [
+          "com.apple.application-bundle"
+        ],
+        "BUTTON_PROMPT": "Open"
+      },
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "Notarize",
+        "INIT_SUBCOMMAND_ID": "Notarize.main.init",
+        "END_CANCEL_SUBCOMMAND_ID": "Notarize.window.close",
+        "IS_BLOCKING": false
+      },
+      "REQUIRED_OMC_VERSION": "5.1",
+      "REQUIRED_MAC_OS_MIN_VERSION": "14.6"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.main.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.window.close",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.drop",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.choose.app",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_OBJECT_DIALOG": {
+        "MESSAGE": "Choose an app (.app bundle) to notarize",
+        "ALLOWED_CONTENT_TYPES": [
+          "com.apple.application-bundle"
+        ],
+        "USE_PATH_CACHING": true,
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.choose.entitlements",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_OBJECT_DIALOG": {
+        "MESSAGE": "Choose an entitlements file for signing",
+        "USE_PATH_CACHING": true,
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.choose.output",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FOLDER_DIALOG": {
+        "MESSAGE": "Choose where to write the distribution archive",
+        "DIALOG_IDENTIFIER": "Notarize.output.location",
+        "USE_PATH_CACHING": true,
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.run",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.sign",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.check",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.submit",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.log",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.staple",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.validate",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.cancel",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.reveal",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.open",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "CredentialSheet",
+        "INIT_SUBCOMMAND_ID": "Notarize.creds.init",
+        "IS_BLOCKING": false
+      }
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.init",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.method",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.save",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.test",
+      "EXECUTION_MODE": "exe_script_file"
+    }
+  ],
+  "VERSION": 2
+}
