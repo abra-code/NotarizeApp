@@ -23,7 +23,6 @@ plister="$support_path/plister"
 # --- View IDs (match Notarize.json) ---
 # Toolbar
 NOTARIZE_BTN_ID=30
-ACTIONS_MENU_ID=31
 CANCEL_BTN_ID=32
 CREDENTIALS_BTN_ID=33
 # Application group
@@ -44,8 +43,17 @@ STATUS_ID=60
 PROGRESS_ID=61
 LOG_ID=62
 REVEAL_BTN_ID=63
-# Credential sheet (built in the W2 phase)
-CRED_METHOD_ID=70
+FETCHLOG_BTN_ID=64
+# Step rail (status Image + run Button per pipeline stage)
+RAIL_SIGN_ID=210
+RAIL_CHECK_ID=211
+RAIL_SUBMIT_ID=212
+RAIL_STAPLE_ID=213
+RAIL_PACKAGE_ID=214
+RAIL_VALIDATE_ID=215
+RAIL_ICON_IDS="210 211 212 213 214 215"
+RAIL_BTN_IDS="220 221 222 223 224 225"
+# Credential window (3-step wizard)
 CRED_APPLEID_ID=71
 CRED_TEAM_ID=72
 CRED_PASSWORD_ID=73
@@ -56,6 +64,20 @@ CRED_PROFILE_ID=77
 CRED_SAVE_ID=78
 CRED_TEST_ID=79
 CRED_RESULT_ID=80
+CRED_APPLEID_GROUP_ID=700
+CRED_APIKEY_GROUP_ID=710
+CRED_STEP1_ID=800
+CRED_PICK_APPLEID_ID=801
+CRED_PICK_APIKEY_ID=802
+CRED_PICK_EXISTING_ID=803
+CRED_STEP2_ID=810
+CRED_CONTINUE_ID=811
+CRED_BACK2_ID=814
+CRED_STEP3_ID=820
+CRED_BACK3_ID=824
+CRED_HINT_CREATE_ID=821
+CRED_HINT_EXISTING_ID=822
+CRED_STEP3_TITLE_ID=823
 
 # --- Preferences (persist across launches) ---
 prefs_dir="$HOME/Library/Application Support/Notarize"
@@ -64,6 +86,8 @@ prefs_file="$prefs_dir/prefs.plist"
 # --- Per-document pasteboard keys ---
 PB_BUSY="ntz_busy_${document_uuid}"
 PB_SUBMISSION="ntz_submission_${document_uuid}"
+# Credential wizard state, keyed to the credential window itself
+PB_CRED_METHOD="ntz_credmethod_${window_uuid}"
 
 # --- Debug logging (gated on a flag file) ---
 DEBUG=false
@@ -129,6 +153,38 @@ set_status() {
 # Show (1) or hide (0) the progress spinner. Arguments: flag
 show_progress() {
     show_view "$PROGRESS_ID" "$1"
+}
+
+# --- Step rail ---------------------------------------------------------------
+# Set a rail stage's status icon. Arguments: icon_view_id, state
+# (pending | running | done | failed | skipped)
+rail_set() {
+    local img color
+    case "$2" in
+        running) img="arrow.clockwise.circle.fill"; color="blue" ;;
+        done)    img="checkmark.circle.fill"; color="green" ;;
+        failed)  img="xmark.circle.fill"; color="red" ;;
+        skipped) img="minus.circle"; color="gray" ;;
+        *)       img="circle"; color="gray" ;;
+    esac
+    set_property "$1" systemName "$img"
+    set_property "$1" foregroundStyle "$color"
+}
+
+# Reset every rail stage to pending.
+rail_reset() {
+    local id
+    for id in $RAIL_ICON_IDS; do
+        rail_set "$id" pending
+    done
+}
+
+# Enable (1) or disable (0) all step-run buttons, incl. Fetch Log. Arguments: flag
+rail_enable() {
+    local id
+    for id in $RAIL_BTN_IDS $FETCHLOG_BTN_ID; do
+        enable_view "$id" "$1"
+    done
 }
 
 # Reset the run log (file and view).
@@ -244,12 +300,12 @@ refresh_target_ui() {
     if [ -n "$target" ]; then
         set_value "$APP_PATH_ID" "$target"
         enable_view "$NOTARIZE_BTN_ID" 1
-        enable_view "$ACTIONS_MENU_ID" 1
+        rail_enable 1
         set_status "Ready: $(/usr/bin/basename "$target")"
     else
         set_value "$APP_PATH_ID" "No app chosen - drop a .app on the log area or click Choose App."
         enable_view "$NOTARIZE_BTN_ID" 0
-        enable_view "$ACTIONS_MENU_ID" 0
+        rail_enable 0
         set_status "Drop an app to notarize, or choose one."
     fi
 }
@@ -424,12 +480,15 @@ run_codesign_verify() {
     return 1
 }
 
-# Gatekeeper assessment; append the result to the log. Arguments: app_path
+# Gatekeeper assessment; append the result to the log and return spctl's
+# exit code. Arguments: app_path
 run_spctl() {
     append_log "Gatekeeper assessment:"
     local out
     out="$(/usr/sbin/spctl --assess --type execute --verbose=4 "$1" 2>&1)"
+    local rc=$?
     append_log "$out"
+    return $rc
 }
 
 # Submit a zip to the notary service and wait for a terminal status. Writes the

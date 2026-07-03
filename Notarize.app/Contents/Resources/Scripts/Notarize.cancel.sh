@@ -21,7 +21,7 @@ fi
 show_progress 0
 enable_view "$CANCEL_BTN_ID" 0
 enable_view "$NOTARIZE_BTN_ID" 1
-enable_view "$ACTIONS_MENU_ID" 1
+rail_enable 1
 pb_set "$PB_BUSY" ""
 append_log "Cancelled by user."
 set_status "Cancelled."

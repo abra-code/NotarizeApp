@@ -40,7 +40,7 @@ finish() {
     show_progress 0
     enable_view "$CANCEL_BTN_ID" 0
     enable_view "$NOTARIZE_BTN_ID" 1
-    enable_view "$ACTIONS_MENU_ID" 1
+    rail_enable 1
     pb_set "$PB_BUSY" ""
     /bin/rm -f "$(state_dir)/run.pid"
 }
@@ -49,34 +49,48 @@ pb_set "$PB_BUSY" 1
 printf '%s' "$$" > "$(state_dir)/run.pid"
 /bin/rm -f "$(state_dir)/cancelled"
 enable_view "$NOTARIZE_BTN_ID" 0
-enable_view "$ACTIONS_MENU_ID" 0
+rail_enable 0
 show_view "$REVEAL_BTN_ID" 0
 enable_view "$CANCEL_BTN_ID" 1
 show_progress 1
 clear_log
+rail_reset
 append_log "=== Notarize: $(/usr/bin/basename "$target") ==="
 
 # 1. Sign for release (optional).
 if [ "$sign_on" = "0" ]; then
+    rail_set "$RAIL_SIGN_ID" running
     set_status "Signing for release..."
     sign_app "$target" "$identity" "$entitlements"
     if [ "$?" != "0" ]; then
+        rail_set "$RAIL_SIGN_ID" failed
         set_status "Signing failed."
         "$alert_tool" --level stop --title "Notarize" "Code signing failed. See the log."
         finish
         exit 0
     fi
+    rail_set "$RAIL_SIGN_ID" done
+    rail_set "$RAIL_CHECK_ID" running
     run_codesign_verify "$target"
+    if [ "$?" = "0" ]; then
+        rail_set "$RAIL_CHECK_ID" done
+    else
+        rail_set "$RAIL_CHECK_ID" failed
+    fi
 else
+    rail_set "$RAIL_SIGN_ID" skipped
+    rail_set "$RAIL_CHECK_ID" skipped
     append_log "Using the app's existing signature (signing step skipped)."
 fi
 
 # 2. Package for upload.
+rail_set "$RAIL_SUBMIT_ID" running
 set_status "Packaging for upload..."
 append_log "Packaging for upload..."
 upload_zip="$(state_dir)/upload.zip"
 package_app "$target" "$upload_zip"
 if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Packaging failed."
     "$alert_tool" --level stop --title "Notarize" "Could not create the upload archive."
     finish
@@ -87,6 +101,7 @@ fi
 set_status "Submitting to the notary service..."
 submit_and_wait "$upload_zip" "$profile"
 if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Submission failed."
     "$alert_tool" --level stop --title "Notarize" "Notarization submission failed. See the log."
     finish
@@ -95,6 +110,7 @@ fi
 
 status="$(submission_status)"
 if [ "$status" != "Accepted" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Notarization $status. Fetching log..."
     append_log "Notarization not accepted ($status). Fetching log..."
     fetch_log "$(submission_id)" "$profile"
@@ -103,26 +119,34 @@ if [ "$status" != "Accepted" ]; then
     finish
     exit 0
 fi
+rail_set "$RAIL_SUBMIT_ID" done
 
 # 4. Staple the ticket (optional).
 if [ "$staple_on" = "0" ]; then
+    rail_set "$RAIL_STAPLE_ID" running
     set_status "Stapling notarization ticket..."
     staple_app "$target"
     if [ "$?" != "0" ]; then
+        rail_set "$RAIL_STAPLE_ID" failed
         set_status "Stapling failed."
         "$alert_tool" --level stop --title "Notarize" "Stapling the ticket failed. See the log."
         finish
         exit 0
     fi
+    rail_set "$RAIL_STAPLE_ID" done
+else
+    rail_set "$RAIL_STAPLE_ID" skipped
 fi
 
 # 5. Distribution archive (optional).
 if [ "$zip_on" = "0" ]; then
+    rail_set "$RAIL_PACKAGE_ID" running
     set_status "Creating distribution archive..."
     dist="$(dist_zip_path "$target" "$output_dir")"
     append_log "Creating distribution archive: $dist"
     package_app "$target" "$dist"
     if [ "$?" != "0" ]; then
+        rail_set "$RAIL_PACKAGE_ID" failed
         set_status "Distribution packaging failed."
         "$alert_tool" --level stop --title "Notarize" "Could not create the distribution archive."
         finish
@@ -130,10 +154,19 @@ if [ "$zip_on" = "0" ]; then
     fi
     printf '%s' "$dist" > "$(state_dir)/dist.txt"
     show_view "$REVEAL_BTN_ID" 1
+    rail_set "$RAIL_PACKAGE_ID" done
+else
+    rail_set "$RAIL_PACKAGE_ID" skipped
 fi
 
 # 6. Final Gatekeeper assessment.
+rail_set "$RAIL_VALIDATE_ID" running
 run_spctl "$target"
+if [ "$?" = "0" ]; then
+    rail_set "$RAIL_VALIDATE_ID" done
+else
+    rail_set "$RAIL_VALIDATE_ID" failed
+fi
 append_log "Done. Accepted, stapled, and packaged for distribution."
 set_status "Done. Notarized and ready for distribution."
 "$notify_tool" --title "Notarize" "$(/usr/bin/basename "$target") is notarized and ready."

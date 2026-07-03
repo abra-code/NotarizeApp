@@ -1,10 +1,20 @@
 #!/bin/sh
-# Notarize.creds.init.sh - populate the credential window
+# Notarize.creds.init.sh - reset the credential wizard to step 1
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
-# Method options: 1 = Apple ID, 2 = App Store Connect API key,
-# 3 = existing keychain profile (created with notarytool outside this app).
-set_property "$CRED_METHOD_ID" options '["Apple ID","App Store Connect API key","Existing keychain profile"]'
+# No method chosen yet.
+pb_set "$PB_CRED_METHOD" ""
+
+# Show the method chooser, hide the other panels.
+show_view "$CRED_STEP1_ID" 1
+show_view "$CRED_STEP2_ID" 0
+show_view "$CRED_STEP3_ID" 0
+
+# Panel defaults for the create flows.
+show_view "$CRED_APPLEID_GROUP_ID" 1
+show_view "$CRED_APIKEY_GROUP_ID" 0
+show_view "$CRED_HINT_CREATE_ID" 1
+show_view "$CRED_HINT_EXISTING_ID" 0
 
 # Prefill the team id from the default identity, if discoverable.
 def_id="$(prefs_get default_identity)"
@@ -16,8 +26,8 @@ if [ -n "$team" ]; then
     set_value "$CRED_TEAM_ID" "$team"
 fi
 
-# Default to the Apple ID method: show its fields, hide the other groups.
-show_view 700 1
-show_view 710 0
-show_view 720 0
+# Action buttons stay disabled until their fields are complete.
+enable_view "$CRED_CONTINUE_ID" 0
+enable_view "$CRED_SAVE_ID" 0
+enable_view "$CRED_TEST_ID" 0
 set_value "$CRED_RESULT_ID" ""

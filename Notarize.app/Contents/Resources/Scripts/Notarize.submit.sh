@@ -13,31 +13,51 @@ if [ -z "$profile" ]; then
     exit 0
 fi
 
+# The upload can take minutes: enable Cancel and block other actions meanwhile.
+finish() {
+    show_progress 0
+    enable_view "$CANCEL_BTN_ID" 0
+    enable_view "$NOTARIZE_BTN_ID" 1
+    rail_enable 1
+    pb_set "$PB_BUSY" ""
+    /bin/rm -f "$(state_dir)/run.pid"
+}
+
+pb_set "$PB_BUSY" 1
+printf '%s' "$$" > "$(state_dir)/run.pid"
+enable_view "$NOTARIZE_BTN_ID" 0
+rail_enable 0
+enable_view "$CANCEL_BTN_ID" 1
 show_progress 1
 clear_log
+rail_set "$RAIL_SUBMIT_ID" running
 set_status "Packaging for upload..."
 upload_zip="$(state_dir)/upload.zip"
 package_app "$target" "$upload_zip"
 if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Packaging failed."
-    show_progress 0
+    finish
     exit 0
 fi
 
 set_status "Submitting to the notary service..."
 submit_and_wait "$upload_zip" "$profile"
 if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Submission failed."
-    show_progress 0
+    finish
     exit 0
 fi
 
 status="$(submission_status)"
 if [ "$status" != "Accepted" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Notarization $status. Fetching log..."
     fetch_log "$(submission_id)" "$profile"
     print_issues
 else
-    set_status "Accepted. Use Steps > Staple Ticket next."
+    rail_set "$RAIL_SUBMIT_ID" done
+    set_status "Accepted. Run Staple Ticket next."
 fi
-show_progress 0
+finish

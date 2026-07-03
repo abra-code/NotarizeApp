@@ -9,12 +9,15 @@ if [ -z "$target" ]; then
 fi
 
 show_progress 1
+rail_set "$RAIL_STAPLE_ID" running
 set_status "Stapling notarization ticket..."
 staple_app "$target"
 if [ "$?" != "0" ]; then
+    rail_set "$RAIL_STAPLE_ID" failed
     set_status "Stapling failed."
     show_progress 0
     exit 0
 fi
+rail_set "$RAIL_STAPLE_ID" done
 set_status "Stapled."
 show_progress 0

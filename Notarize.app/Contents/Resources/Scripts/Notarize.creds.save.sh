@@ -10,7 +10,7 @@ if [ -z "$profile" ]; then
     exit 0
 fi
 
-method="$(view_value "$CRED_METHOD_ID")"
+method="$(pb_get "$PB_CRED_METHOD")"
 
 if [ "$method" = "3" ]; then
     # Existing keychain profile, created with notarytool outside this app.

@@ -107,6 +107,11 @@
     },
     {
       "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.package",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
       "COMMAND_ID": "Notarize.cancel",
       "EXECUTION_MODE": "exe_script_file"
     },
@@ -132,7 +137,22 @@
     },
     {
       "NAME": "Notarize",
-      "COMMAND_ID": "Notarize.creds.method",
+      "COMMAND_ID": "Notarize.creds.pick",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.back",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.next",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "Notarize",
+      "COMMAND_ID": "Notarize.creds.fields",
       "EXECUTION_MODE": "exe_script_file"
     },
     {
