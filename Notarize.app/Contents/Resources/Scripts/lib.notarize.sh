@@ -394,70 +394,32 @@ package_app() {
     /usr/bin/ditto -c -k --keepParent "$1" "$2"
 }
 
-# Sign the target app for release, inside-out (nested executables and frameworks
-# first, then the bundle), with the hardened runtime and a secure timestamp.
-# Mirrors AppletBuilder's codesign_applet.sh. Arguments: app_path, identity,
-# entitlements_file (may be empty). Returns 0 on success.
+# Sign the target app for release by delegating to the bundled
+# codesign_applet.sh (copied from OMC Distribution/Scripts): it signs nested
+# executables in Contents/Helpers|Library|Support, each framework's Support
+# tools, the frameworks, and the bundle itself, then verifies. It is invoked
+# with --brief, so its output is a compact summary by design (no per-file
+# signing chatter, banners, or dividers); that output is captured to
+# state_dir/sign.log and mirrored verbatim into the UI log.
+# Arguments: app_path, identity, entitlements_file (may be empty).
+# Returns 0 on success, 1 on failure.
 sign_app() {
     local app="$1"
     local identity="$2"
     local entitlements="$3"
 
-    # Identity comes from the Developer ID Application list, so enable the
-    # hardened runtime and a secure timestamp (both required for notarization).
-    local sign_options="--options runtime"
-    local timestamp="--timestamp"
-    local ent_arg=""
-    if [ -n "$entitlements" ] && [ -f "$entitlements" ]; then
-        ent_arg="--entitlements $entitlements"
-    fi
+    local signlog="$(state_dir)/sign.log"
+    append_log "Signing $(/usr/bin/basename "$app") (log: sign.log)..."
+    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --brief "$app" "$identity" "$entitlements" > "$signlog" 2>&1
+    local rc=$?
 
-    append_log "Removing quarantine attribute..."
-    /usr/bin/xattr -dr com.apple.quarantine "$app" 2>/dev/null
+    # Brief output is already curated; mirror every line into the UI log.
+    while IFS= read -r line; do
+        append_log "$line"
+    done < "$signlog"
 
-    # Nested executables first: Helpers, Library, Support.
-    local dir f kind out
-    for dir in "$app/Contents/Helpers" "$app/Contents/Library" "$app/Contents/Support"; do
-        if [ -d "$dir" ]; then
-            append_log "Signing nested executables in $(/usr/bin/basename "$dir")..."
-            /usr/bin/find "$dir" -type f -perm +111 -print 2>/dev/null > "$(state_dir)/_execs.txt"
-            while IFS= read -r f; do
-                if [ -z "$f" ]; then
-                    continue
-                fi
-                kind="$(/usr/bin/file -b "$f")"
-                case "$kind" in
-                    *Mach-O*|*executable*|*script*)
-                        out="$(/usr/bin/codesign --force --verbose $sign_options $timestamp --sign "$identity" "$f" 2>&1)"
-                        _log "$out"
-                        ;;
-                esac
-            done < "$(state_dir)/_execs.txt"
-        fi
-    done
-
-    # Frameworks next.
-    if [ -d "$app/Contents/Frameworks" ]; then
-        local fw
-        for fw in "$app/Contents/Frameworks"/*.framework; do
-            if [ -d "$fw" ]; then
-                append_log "Signing framework: $(/usr/bin/basename "$fw")"
-                out="$(/usr/bin/codesign --force --verbose $sign_options $timestamp --sign "$identity" "$fw" 2>&1)"
-                _log "$out"
-            fi
-        done
-    fi
-
-    # The bundle itself, last.
-    append_log "Signing app bundle: $(/usr/bin/basename "$app")"
-    local app_id="$(/usr/bin/defaults read "$app/Contents/Info.plist" CFBundleIdentifier 2>/dev/null)"
-    local id_arg=""
-    if [ -n "$app_id" ]; then
-        id_arg="--identifier $app_id"
-    fi
-    /usr/bin/codesign --force --verbose $sign_options $ent_arg $timestamp $id_arg --sign "$identity" "$app" 2>&1
-    if [ "$?" != "0" ]; then
-        append_log "ERROR: signing the app bundle failed."
+    if [ "$rc" != "0" ]; then
+        append_log "ERROR: signing failed (rc=$rc)."
         return 1
     fi
     append_log "Signed for release."

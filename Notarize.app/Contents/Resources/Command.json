@@ -53,7 +53,7 @@
       "NAME": "Notarize",
       "COMMAND_ID": "Notarize.choose.entitlements",
       "EXECUTION_MODE": "exe_script_file",
-      "CHOOSE_OBJECT_DIALOG": {
+      "CHOOSE_FILE_DIALOG": {
         "MESSAGE": "Choose an entitlements file for signing",
         "USE_PATH_CACHING": true,
         "BUTTON_PROMPT": "Choose"
