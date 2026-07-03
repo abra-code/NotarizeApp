@@ -22,9 +22,9 @@
 	<key>CFBundleExecutable</key>
 	<string>Notarize</string>
 	<key>CFBundleIconFile</key>
-	<string>Scope</string>
+	<string>Notarize</string>
 	<key>CFBundleIconName</key>
-	<string>Scope</string>
+	<string>Notarize</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.abracode.notarize</string>
 	<key>CFBundleInfoDictionaryVersion</key>
