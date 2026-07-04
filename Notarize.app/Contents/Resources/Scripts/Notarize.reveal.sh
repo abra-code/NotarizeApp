@@ -1,12 +1,8 @@
 #!/bin/sh
-# Notarize.reveal.sh - reveal the distribution archive in Finder
+# Notarize.reveal.sh - reveal the notarized app in Finder
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
-f="$(state_dir)/dist.txt"
-if [ ! -f "$f" ]; then
-    exit 0
-fi
-dist="$(/bin/cat "$f")"
-if [ -e "$dist" ]; then
-    /usr/bin/open -R "$dist"
+app="$(work_target)"
+if [ -n "$app" ] && [ -e "$app" ]; then
+    /usr/bin/open -R "$app"
 fi

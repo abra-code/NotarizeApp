@@ -29,7 +29,7 @@
                             "systemImage": "checkmark.seal",
                             "actionID": "Notarize.run",
                             "disabled": true,
-                            "help": "Sign, submit, wait, staple, and package the app for distribution"
+                            "help": "Copy to the output folder, sign, submit, wait, and staple the app"
                         }
                     },
                     {
@@ -262,7 +262,7 @@
                                                 "id": 54,
                                                 "properties": {
                                                     "text": "",
-                                                    "prompt": "Defaults to the app's folder",
+                                                    "prompt": "Optional - the app is copied here before signing",
                                                     "font": {
                                                         "size": 11,
                                                         "design": "monospaced"
@@ -363,36 +363,6 @@
                                                 "children": [
                                                     {
                                                         "type": "Image",
-                                                        "id": 211,
-                                                        "properties": {
-                                                            "systemName": "circle",
-                                                            "foregroundStyle": "gray",
-                                                            "frame": {
-                                                                "width": 16
-                                                            }
-                                                        }
-                                                    },
-                                                    {
-                                                        "type": "Button",
-                                                        "id": 221,
-                                                        "properties": {
-                                                            "title": "Check Signature",
-                                                            "buttonStyle": "plain",
-                                                            "disabled": true,
-                                                            "actionID": "Notarize.check",
-                                                            "help": "Show signature, Gatekeeper, and staple status"
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "type": "HStack",
-                                                "properties": {
-                                                    "spacing": 6
-                                                },
-                                                "children": [
-                                                    {
-                                                        "type": "Image",
                                                         "id": 212,
                                                         "properties": {
                                                             "systemName": "circle",
@@ -441,36 +411,6 @@
                                                             "disabled": true,
                                                             "actionID": "Notarize.staple",
                                                             "help": "Attach the notarization ticket to the app"
-                                                        }
-                                                    }
-                                                ]
-                                            },
-                                            {
-                                                "type": "HStack",
-                                                "properties": {
-                                                    "spacing": 6
-                                                },
-                                                "children": [
-                                                    {
-                                                        "type": "Image",
-                                                        "id": 214,
-                                                        "properties": {
-                                                            "systemName": "circle",
-                                                            "foregroundStyle": "gray",
-                                                            "frame": {
-                                                                "width": 16
-                                                            }
-                                                        }
-                                                    },
-                                                    {
-                                                        "type": "Button",
-                                                        "id": 224,
-                                                        "properties": {
-                                                            "title": "Package Zip",
-                                                            "buttonStyle": "plain",
-                                                            "disabled": true,
-                                                            "actionID": "Notarize.package",
-                                                            "help": "Create the distribution zip in the output folder"
                                                         }
                                                     }
                                                 ]
@@ -537,6 +477,19 @@
                                                                 "maxWidth": "infinity",
                                                                 "alignment": "leading"
                                                             }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 65,
+                                                        "properties": {
+                                                            "title": "Inspect Signature",
+                                                            "systemImage": "doc.text.magnifyingglass",
+                                                            "buttonStyle": "borderless",
+                                                            "controlSize": "small",
+                                                            "disabled": true,
+                                                            "actionID": "Notarize.check",
+                                                            "help": "Show signature, Gatekeeper, and staple status for the app"
                                                         }
                                                     },
                                                     {

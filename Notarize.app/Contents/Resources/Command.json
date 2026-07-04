@@ -64,7 +64,7 @@
       "COMMAND_ID": "Notarize.choose.output",
       "EXECUTION_MODE": "exe_script_file",
       "CHOOSE_FOLDER_DIALOG": {
-        "MESSAGE": "Choose where to write the distribution archive",
+        "MESSAGE": "Choose the output folder (the app is copied there before signing)",
         "DIALOG_IDENTIFIER": "Notarize.output.location",
         "USE_PATH_CACHING": true,
         "BUTTON_PROMPT": "Choose"
@@ -103,11 +103,6 @@
     {
       "NAME": "Notarize",
       "COMMAND_ID": "Notarize.validate",
-      "EXECUTION_MODE": "exe_script_file"
-    },
-    {
-      "NAME": "Notarize",
-      "COMMAND_ID": "Notarize.package",
       "EXECUTION_MODE": "exe_script_file"
     },
     {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Notarize.run.sh - full pipeline: sign, package, submit, wait, log, staple, zip
+# Notarize.run.sh - full pipeline: copy to output, sign, submit, wait, staple, validate
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
 target="$(get_target)"
@@ -23,10 +23,12 @@ entitlements="$(view_value "$ENTITLEMENTS_FIELD_ID")"
 output_dir="$(view_value "$OUTPUT_FIELD_ID")"
 identity="$(selected_identity)"
 
-if [ "$sign_on" = "0" ] && [ -z "$identity" ]; then
+if [ -z "$identity" ]; then
     "$alert_tool" --level caution --title "Notarize" "No Developer ID Application identity is available. Install a Developer ID certificate."
     exit 0
 fi
+
+save_app_settings
 
 # Reset the per-run UI/state, in a private function so every exit path restores it.
 finish() {
@@ -50,10 +52,22 @@ clear_log
 rail_reset
 append_log "=== Notarize: $(/usr/bin/basename "$target") ==="
 
-# 1. Sign for release 
+# 1. Copy to the output folder (never release-sign the development copy in
+# place), then sign the copy.
 rail_set "$RAIL_SIGN_ID" running
 set_status "Signing for release..."
-sign_app "$target" "$identity" "$entitlements"
+work="$(prepare_release_copy "$target" "$output_dir")"
+if [ "$?" != "0" ] || [ -z "$work" ]; then
+	rail_set "$RAIL_SIGN_ID" failed
+	set_status "Copy to the output folder failed."
+	"$alert_tool" --level stop --title "Notarize" "Could not copy the app to the output folder."
+	finish
+	exit 0
+fi
+if [ "$work" != "$target" ]; then
+	append_log "Copied to output folder: $work"
+fi
+sign_app "$work" "$identity" "$entitlements"
 if [ "$?" != "0" ]; then
 	rail_set "$RAIL_SIGN_ID" failed
 	set_status "Signing failed."
@@ -61,21 +75,16 @@ if [ "$?" != "0" ]; then
 	finish
 	exit 0
 fi
+# codesign_applet.sh already verified the signature (--deep --strict) and
+# failed the sign step on any problem, so no separate check stage is needed.
 rail_set "$RAIL_SIGN_ID" done
-rail_set "$RAIL_CHECK_ID" running
-run_codesign_verify "$target"
-if [ "$?" = "0" ]; then
-	rail_set "$RAIL_CHECK_ID" done
-else
-	rail_set "$RAIL_CHECK_ID" failed
-fi
 
 # 2. Package for upload.
 rail_set "$RAIL_SUBMIT_ID" running
 set_status "Packaging for upload..."
 append_log "Packaging for upload..."
 upload_zip="$(state_dir)/upload.zip"
-package_app "$target" "$upload_zip"
+package_app "$work" "$upload_zip"
 if [ "$?" != "0" ]; then
     rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Packaging failed."
@@ -111,7 +120,7 @@ rail_set "$RAIL_SUBMIT_ID" done
 # 4. Staple the ticket
 rail_set "$RAIL_STAPLE_ID" running
 set_status "Stapling notarization ticket..."
-staple_app "$target"
+staple_app "$work"
 if [ "$?" != "0" ]; then
 	rail_set "$RAIL_STAPLE_ID" failed
 	set_status "Stapling failed."
@@ -120,33 +129,17 @@ if [ "$?" != "0" ]; then
 	exit 0
 fi
 rail_set "$RAIL_STAPLE_ID" done
-
-# 5. Distribution archive
-rail_set "$RAIL_PACKAGE_ID" running
-set_status "Creating distribution archive..."
-dist="$(dist_zip_path "$target" "$output_dir")"
-append_log "Creating distribution archive: $dist"
-package_app "$target" "$dist"
-if [ "$?" != "0" ]; then
-	rail_set "$RAIL_PACKAGE_ID" failed
-	set_status "Distribution packaging failed."
-	"$alert_tool" --level stop --title "Notarize" "Could not create the distribution archive."
-	finish
-	exit 0
-fi
-printf '%s' "$dist" > "$(state_dir)/dist.txt"
 show_view "$REVEAL_BTN_ID" 1
-rail_set "$RAIL_PACKAGE_ID" done
 
-# 6. Final Gatekeeper assessment.
+# 5. Final Gatekeeper assessment.
 rail_set "$RAIL_VALIDATE_ID" running
-run_spctl "$target"
+run_spctl "$work"
 if [ "$?" = "0" ]; then
     rail_set "$RAIL_VALIDATE_ID" done
 else
     rail_set "$RAIL_VALIDATE_ID" failed
 fi
-append_log "Done. Accepted, stapled, and packaged for distribution."
+append_log "Done. Accepted, stapled, and ready at: $work"
 set_status "Done. Notarized and ready for distribution."
 "$notify_tool" --title "Notarize" "$(/usr/bin/basename "$target") is notarized and ready."
 finish

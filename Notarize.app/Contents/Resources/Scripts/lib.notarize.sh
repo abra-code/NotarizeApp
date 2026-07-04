@@ -42,15 +42,14 @@ PROGRESS_ID=61
 LOG_ID=62
 REVEAL_BTN_ID=63
 FETCHLOG_BTN_ID=64
+INSPECT_BTN_ID=65
 # Step rail (status Image + run Button per pipeline stage)
 RAIL_SIGN_ID=210
-RAIL_CHECK_ID=211
 RAIL_SUBMIT_ID=212
 RAIL_STAPLE_ID=213
-RAIL_PACKAGE_ID=214
 RAIL_VALIDATE_ID=215
-RAIL_ICON_IDS="210 211 212 213 214 215"
-RAIL_BTN_IDS="220 221 222 223 224 225"
+RAIL_ICON_IDS="210 212 213 215"
+RAIL_BTN_IDS="220 222 223 225"
 # Credential window (3-step wizard)
 CRED_APPLEID_ID=71
 CRED_TEAM_ID=72
@@ -177,10 +176,11 @@ rail_reset() {
     done
 }
 
-# Enable (1) or disable (0) all step-run buttons, incl. Fetch Log. Arguments: flag
+# Enable (1) or disable (0) all step-run buttons, plus the Inspect Signature
+# and Fetch Log diagnostics. Arguments: flag
 rail_enable() {
     local id
-    for id in $RAIL_BTN_IDS $FETCHLOG_BTN_ID; do
+    for id in $RAIL_BTN_IDS $INSPECT_BTN_ID $FETCHLOG_BTN_ID; do
         enable_view "$id" "$1"
     done
 }
@@ -219,6 +219,51 @@ prefs_set() {
     prefs_ensure
     "$plister" remove "$prefs_file" "/$1" 2>/dev/null
     "$plister" insert "$1" string "$2" "$prefs_file" /
+}
+
+# --- Per-app preferences ------------------------------------------------------
+# Settings are remembered per target app under the /apps dict, keyed by the
+# bundle identifier (falls back to the bundle name for apps without one).
+# Fields: output_dir, entitlements, and - only when they differ from the
+# global defaults - identity and profile.
+
+# Print the prefs key for the current target app (empty if no target).
+app_prefs_key() {
+    local target="$(get_target)"
+    if [ -z "$target" ]; then
+        return 0
+    fi
+    local bid="$("$plister" get value "$target/Contents/Info.plist" /CFBundleIdentifier 2>/dev/null)"
+    if [ -z "$bid" ]; then
+        bid="$(/usr/bin/basename "$target")"
+    fi
+    printf '%s' "$bid"
+}
+
+# Print a per-app prefs value for the current target (empty if unset). Arguments: field
+app_pref_get() {
+    local key="$(app_prefs_key)"
+    if [ -n "$key" ]; then
+        "$plister" get value "$prefs_file" "/apps/$key/$1" 2>/dev/null
+    fi
+}
+
+# Upsert a per-app prefs value for the current target; an empty value removes
+# the entry. No-op when no target is chosen. Arguments: field, value
+app_pref_set() {
+    local key="$(app_prefs_key)"
+    if [ -z "$key" ]; then
+        return 0
+    fi
+    prefs_ensure
+    "$plister" get type "$prefs_file" /apps >/dev/null 2>&1 \
+        || "$plister" insert apps dict "$prefs_file" /
+    "$plister" get type "$prefs_file" "/apps/$key" >/dev/null 2>&1 \
+        || "$plister" insert "$key" dict "$prefs_file" /apps
+    "$plister" remove "$prefs_file" "/apps/$key/$1" 2>/dev/null
+    if [ -n "$2" ]; then
+        "$plister" insert "$1" string "$2" "$prefs_file" "/apps/$key"
+    fi
 }
 
 # Append a profile name to known_profiles[] (no duplicates). Arguments: name
@@ -279,9 +324,11 @@ url_to_path() {
     printf '%b' "$(printf '%s' "$raw" | /usr/bin/sed 's/%/\\x/g')"
 }
 
-# Store the target app path. Arguments: path
+# Store the target app path; forget any release copy of the previous target.
+# Arguments: path
 set_target() {
     printf '%s' "$1" > "$(state_dir)/target.txt"
+    /bin/rm -f "$(state_dir)/release.txt"
 }
 
 # Print the stored target app path (empty if none).
@@ -292,11 +339,128 @@ get_target() {
     fi
 }
 
+# Print the path the pipeline operates on: the release copy when one was made
+# (and still exists), else the chosen target.
+work_target() {
+    local f="$(state_dir)/release.txt"
+    if [ -f "$f" ]; then
+        local p="$(/bin/cat "$f")"
+        if [ -e "$p" ]; then
+            printf '%s' "$p"
+            return 0
+        fi
+    fi
+    get_target
+}
+
+# Print the path of an entitlements file living next to an app: prefer
+# <AppName>.entitlements, else the first *.entitlements in the app's folder.
+# Arguments: app_path
+detect_entitlements() {
+    local dir="$(/usr/bin/dirname "$1")"
+    local base="$(/usr/bin/basename "$1" .app)"
+    if [ -f "$dir/$base.entitlements" ]; then
+        printf '%s' "$dir/$base.entitlements"
+        return 0
+    fi
+    local f
+    for f in "$dir"/*.entitlements; do
+        if [ -f "$f" ]; then
+            printf '%s' "$f"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# Select an identity in the picker by name (no-op when empty or not installed).
+# Arguments: identity_name
+select_identity() {
+    if [ -z "$1" ]; then
+        return 0
+    fi
+    local idx="$(/usr/bin/grep -n -x -F "$1" "$(state_dir)/identities.txt" 2>/dev/null | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
+    if [ -n "$idx" ]; then
+        "$dialog_tool" "$document_uuid" "$IDENTITY_PICKER_ID" "$idx"
+    fi
+}
+
+# Fill the settings fields for the current target from its remembered per-app
+# prefs, falling back to auto-detection (entitlements) and the global defaults
+# (identity, profile). Call after set_target with the pickers already populated.
+apply_app_settings() {
+    local target="$(get_target)"
+    if [ -z "$target" ]; then
+        return 0
+    fi
+
+    # Output folder is remembered per app only (empty = next to the app).
+    set_value "$OUTPUT_FIELD_ID" "$(app_pref_get output_dir)"
+
+    # Entitlements: the remembered file, else one found next to the app.
+    local ent="$(app_pref_get entitlements)"
+    if [ -z "$ent" ] || [ ! -f "$ent" ]; then
+        ent="$(detect_entitlements "$target")"
+    fi
+    set_value "$ENTITLEMENTS_FIELD_ID" "$ent"
+
+    # Identity and profile: per-app override, else the global default.
+    local identity="$(app_pref_get identity)"
+    if [ -z "$identity" ]; then
+        identity="$(prefs_get default_identity)"
+    fi
+    select_identity "$identity"
+    refresh_profile_picker "$(app_pref_get profile)"
+}
+
+# Persist the current settings: output folder and entitlements per app;
+# identity and profile as global defaults, with a per-app override recorded
+# only when the choice differs from the global default. Call when a pipeline
+# action runs, so manual field edits are captured too.
+save_app_settings() {
+    local target="$(get_target)"
+    if [ -z "$target" ]; then
+        return 0
+    fi
+
+    app_pref_set output_dir "$(view_value "$OUTPUT_FIELD_ID")"
+    app_pref_set entitlements "$(view_value "$ENTITLEMENTS_FIELD_ID")"
+
+    local identity="$(selected_identity)"
+    if [ -n "$identity" ]; then
+        local def_identity="$(prefs_get default_identity)"
+        if [ -z "$def_identity" ]; then
+            prefs_set default_identity "$identity"
+            def_identity="$identity"
+        fi
+        if [ "$identity" = "$def_identity" ]; then
+            app_pref_set identity ""
+        else
+            app_pref_set identity "$identity"
+        fi
+    fi
+
+    local profile="$(selected_profile)"
+    if [ -n "$profile" ]; then
+        local def_profile="$(prefs_get default_profile)"
+        if [ -z "$def_profile" ]; then
+            prefs_set default_profile "$profile"
+            def_profile="$profile"
+        fi
+        if [ "$profile" = "$def_profile" ]; then
+            app_pref_set profile ""
+        else
+            app_pref_set profile "$profile"
+        fi
+    fi
+}
+
 # Reflect the current target in the window: path label, status, button state.
 refresh_target_ui() {
     local target="$(get_target)"
     if [ -n "$target" ]; then
         set_value "$APP_PATH_ID" "$target"
+        apply_app_settings
         enable_view "$NOTARIZE_BTN_ID" 1
         rail_enable 1
         set_status "Ready: $(/usr/bin/basename "$target")"
@@ -315,6 +479,7 @@ populate_pickers() {
     local ids="$(list_developer_id_identities)"
     printf '%s\n' "$ids" > "$(state_dir)/identities.txt"
     set_property "$IDENTITY_PICKER_ID" options "$(printf '%s' "$ids" | json_array_from_lines)"
+    select_identity "$(prefs_get default_identity)"
 
     refresh_profile_picker ""
 }
@@ -374,12 +539,56 @@ selected_profile() {
 }
 
 # --- Pipeline building blocks ----------------------------------------------
-# Package an app bundle into a zip with ditto (the correct tool for bundles -
-# preserves symlinks and the bundle root the notary service expects).
-# Arguments: app_path, dest_zip
+# Package an app bundle into a zip for the NOTARY UPLOAD ONLY (Apple's
+# documented command; preserves symlinks and the bundle root the notary
+# service expects). Never hand this zip to users: without --sequesterRsrc,
+# ditto stores each extended attribute (e.g. com.apple.provenance) as an
+# inline AppleDouble "._" entry next to its file, and Archive Utility
+# extracts those as literal files inside the bundle - "unsealed contents"
+# that break the code signature. Arguments: app_path, dest_zip
 package_app() {
     /bin/rm -f "$2"
     /usr/bin/ditto -c -k --keepParent "$1" "$2"
+}
+
+# Copy the app to the output folder so release signing never happens in place
+# (the development copy keeps its ad-hoc signature). Prints the path the
+# pipeline should operate on: the copy, or the app itself when no distinct
+# output folder is set. Returns non-zero if the copy fails.
+# Arguments: app_path, output_dir (may be empty)
+prepare_release_copy() {
+    local app="$1"
+    local outdir="$2"
+    local statef="$(state_dir)/release.txt"
+    # Canonicalize both folders (trailing slashes, "..", symlinks) before the
+    # same-folder test: comparing raw strings could route the rm -rf below at
+    # the original app (e.g. an output dir of "/Apps/" for an app in "/Apps").
+    if [ -n "$outdir" ]; then
+        /bin/mkdir -p "$outdir" || return 1
+        outdir="$(cd "$outdir" 2>/dev/null && /bin/pwd -P)"
+        if [ -z "$outdir" ]; then
+            return 1
+        fi
+    fi
+    # Canonicalize the app itself as well (a symlinked target could otherwise
+    # alias a bundle that really lives in the output folder).
+    local real_app
+    real_app="$(cd "$app" 2>/dev/null && /bin/pwd -P)"
+    if [ -z "$real_app" ]; then
+        return 1
+    fi
+    local app_dir="$(/usr/bin/dirname "$real_app")"
+    if [ -z "$outdir" ] || [ "$outdir" = "$app_dir" ]; then
+        /bin/rm -f "$statef"
+        printf '%s' "$app"
+        return 0
+    fi
+    local dest="$outdir/$(/usr/bin/basename "$app")"
+    /bin/rm -rf "$dest"
+    /usr/bin/ditto "$app" "$dest" || return 1
+    printf '%s' "$dest" > "$statef"
+    printf '%s' "$dest"
+    return 0
 }
 
 # Sign the target app for release by delegating to the bundled
@@ -524,15 +733,4 @@ staple_app() {
     fi
     append_log "Stapled."
     return 0
-}
-
-# Compute the distribution zip path. Arguments: app_path, output_dir (may be empty)
-dist_zip_path() {
-    local app="$1"
-    local outdir="$2"
-    if [ -z "$outdir" ]; then
-        outdir="$(/usr/bin/dirname "$app")"
-    fi
-    local base="$(/usr/bin/basename "$app" .app)"
-    printf '%s/%s-notarized.zip' "$outdir" "$base"
 }

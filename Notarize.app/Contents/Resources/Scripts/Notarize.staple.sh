@@ -1,8 +1,9 @@
 #!/bin/sh
-# Notarize.staple.sh - staple the notarization ticket to the target app
+# Notarize.staple.sh - staple the notarization ticket to the release copy when
+# one was made, else the chosen target
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
-target="$(get_target)"
+target="$(work_target)"
 if [ -z "$target" ]; then
     "$alert_tool" --level caution --title "Notarize" "Choose an app first."
     exit 0
@@ -19,5 +20,6 @@ if [ "$?" != "0" ]; then
     exit 0
 fi
 rail_set "$RAIL_STAPLE_ID" done
+show_view "$REVEAL_BTN_ID" 1
 set_status "Stapled."
 show_progress 0

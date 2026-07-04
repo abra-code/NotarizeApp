@@ -5,12 +5,6 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 prefs_ensure
 populate_pickers
 
-# Prefill the output folder from prefs, if set.
-out_default="$(prefs_get default_output_dir)"
-if [ -n "$out_default" ]; then
-    set_value "$OUTPUT_FIELD_ID" "$out_default"
-fi
-
 # Seed the target from the opened/dropped object, if any.
 first="$(printf '%s' "$OMC_OBJ_PATH" | /usr/bin/head -n 1)"
 if [ -n "$first" ]; then

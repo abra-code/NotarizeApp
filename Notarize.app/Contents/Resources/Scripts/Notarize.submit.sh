@@ -1,8 +1,9 @@
 #!/bin/sh
-# Notarize.submit.sh - package and submit to the notary service, wait for result
+# Notarize.submit.sh - package and submit to the notary service, wait for result.
+# Operates on the release copy when one was made by the sign step.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
-target="$(get_target)"
+target="$(work_target)"
 if [ -z "$target" ]; then
     "$alert_tool" --level caution --title "Notarize" "Choose an app first."
     exit 0
@@ -12,6 +13,8 @@ if [ -z "$profile" ]; then
     "$alert_tool" --level caution --title "Notarize" "Set up and pick a credential profile first."
     exit 0
 fi
+
+save_app_settings
 
 # The upload can take minutes: enable Cancel and block other actions meanwhile.
 finish() {

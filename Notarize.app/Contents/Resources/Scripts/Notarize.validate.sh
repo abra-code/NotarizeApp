@@ -1,8 +1,9 @@
 #!/bin/sh
 # Notarize.validate.sh - validate the stapled ticket and Gatekeeper assessment
+# on the release copy when one was made, else the chosen target
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
-target="$(get_target)"
+target="$(work_target)"
 if [ -z "$target" ]; then
     "$alert_tool" --level caution --title "Notarize" "Choose an app first."
     exit 0
