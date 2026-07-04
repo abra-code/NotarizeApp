@@ -36,7 +36,7 @@
                         "type": "Button",
                         "id": 32,
                         "properties": {
-                            "title": "Cancel",
+                            "title": "Stop",
                             "systemImage": "stop.circle",
                             "actionID": "Notarize.cancel",
                             "disabled": true,
@@ -159,7 +159,8 @@
                                                     "pickerStyle": "menu",
                                                     "options": [],
                                                     "frame": {
-                                                        "maxWidth": "infinity"
+                                                        "maxWidth": "infinity",
+                                                        "alignment": "leading"
                                                     }
                                                 }
                                             }
@@ -190,7 +191,8 @@
                                                     "pickerStyle": "menu",
                                                     "options": [],
                                                     "frame": {
-                                                        "maxWidth": "infinity"
+                                                        "maxWidth": "infinity",
+                                                        "alignment": "leading"
                                                     }
                                                 }
                                             }
@@ -276,35 +278,6 @@
                                                 "properties": {
                                                     "title": "Browse...",
                                                     "actionID": "Notarize.choose.output"
-                                                }
-                                            }
-                                        ]
-                                    },
-                                    {
-                                        "type": "HStack",
-                                        "properties": {
-                                            "spacing": 16
-                                        },
-                                        "children": [
-                                            {
-                                                "type": "Toggle",
-                                                "id": 56,
-                                                "properties": {
-                                                    "title": "Sign for release first"
-                                                }
-                                            },
-                                            {
-                                                "type": "Toggle",
-                                                "id": 57,
-                                                "properties": {
-                                                    "title": "Staple ticket"
-                                                }
-                                            },
-                                            {
-                                                "type": "Toggle",
-                                                "id": 58,
-                                                "properties": {
-                                                    "title": "Create distribution zip"
                                                 }
                                             }
                                         ]

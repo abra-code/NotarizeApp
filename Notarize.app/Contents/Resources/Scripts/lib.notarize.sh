@@ -35,9 +35,7 @@ ENTITLEMENTS_FIELD_ID=52
 ENTITLEMENTS_BROWSE_ID=53
 OUTPUT_FIELD_ID=54
 OUTPUT_BROWSE_ID=55
-SIGN_TOGGLE_ID=56
-STAPLE_TOGGLE_ID=57
-DISTZIP_TOGGLE_ID=58
+
 # Progress + log
 STATUS_ID=60
 PROGRESS_ID=61
@@ -373,16 +371,6 @@ selected_profile() {
         idx=1
     fi
     nth_line "$(state_dir)/profiles.txt" "$idx"
-}
-
-# Succeed (0) if a toggle is on. Treats 0/false/no/off as off, anything else
-# (including empty/default) as on. Arguments: view_id
-toggle_on() {
-    local v="$(view_value "$1")"
-    case "$v" in
-        0|false|FALSE|no|NO|off|OFF) return 1 ;;
-        *) return 0 ;;
-    esac
 }
 
 # --- Pipeline building blocks ----------------------------------------------

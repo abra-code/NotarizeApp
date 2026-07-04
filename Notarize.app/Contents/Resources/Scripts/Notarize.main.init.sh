@@ -5,11 +5,6 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 prefs_ensure
 populate_pickers
 
-# Default the toggles on (sign, staple, create distribution zip).
-set_value "$SIGN_TOGGLE_ID" 1
-set_value "$STAPLE_TOGGLE_ID" 1
-set_value "$DISTZIP_TOGGLE_ID" 1
-
 # Prefill the output folder from prefs, if set.
 out_default="$(prefs_get default_output_dir)"
 if [ -n "$out_default" ]; then

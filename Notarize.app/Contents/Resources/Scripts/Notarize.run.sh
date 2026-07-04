@@ -23,15 +23,8 @@ entitlements="$(view_value "$ENTITLEMENTS_FIELD_ID")"
 output_dir="$(view_value "$OUTPUT_FIELD_ID")"
 identity="$(selected_identity)"
 
-toggle_on "$SIGN_TOGGLE_ID"
-sign_on=$?
-toggle_on "$STAPLE_TOGGLE_ID"
-staple_on=$?
-toggle_on "$DISTZIP_TOGGLE_ID"
-zip_on=$?
-
 if [ "$sign_on" = "0" ] && [ -z "$identity" ]; then
-    "$alert_tool" --level caution --title "Notarize" "No Developer ID Application identity is available. Turn off 'Sign for release first' to notarize the existing signature, or install a Developer ID certificate."
+    "$alert_tool" --level caution --title "Notarize" "No Developer ID Application identity is available. Install a Developer ID certificate."
     exit 0
 fi
 
@@ -57,30 +50,24 @@ clear_log
 rail_reset
 append_log "=== Notarize: $(/usr/bin/basename "$target") ==="
 
-# 1. Sign for release (optional).
-if [ "$sign_on" = "0" ]; then
-    rail_set "$RAIL_SIGN_ID" running
-    set_status "Signing for release..."
-    sign_app "$target" "$identity" "$entitlements"
-    if [ "$?" != "0" ]; then
-        rail_set "$RAIL_SIGN_ID" failed
-        set_status "Signing failed."
-        "$alert_tool" --level stop --title "Notarize" "Code signing failed. See the log."
-        finish
-        exit 0
-    fi
-    rail_set "$RAIL_SIGN_ID" done
-    rail_set "$RAIL_CHECK_ID" running
-    run_codesign_verify "$target"
-    if [ "$?" = "0" ]; then
-        rail_set "$RAIL_CHECK_ID" done
-    else
-        rail_set "$RAIL_CHECK_ID" failed
-    fi
+# 1. Sign for release 
+rail_set "$RAIL_SIGN_ID" running
+set_status "Signing for release..."
+sign_app "$target" "$identity" "$entitlements"
+if [ "$?" != "0" ]; then
+	rail_set "$RAIL_SIGN_ID" failed
+	set_status "Signing failed."
+	"$alert_tool" --level stop --title "Notarize" "Code signing failed. See the log."
+	finish
+	exit 0
+fi
+rail_set "$RAIL_SIGN_ID" done
+rail_set "$RAIL_CHECK_ID" running
+run_codesign_verify "$target"
+if [ "$?" = "0" ]; then
+	rail_set "$RAIL_CHECK_ID" done
 else
-    rail_set "$RAIL_SIGN_ID" skipped
-    rail_set "$RAIL_CHECK_ID" skipped
-    append_log "Using the app's existing signature (signing step skipped)."
+	rail_set "$RAIL_CHECK_ID" failed
 fi
 
 # 2. Package for upload.
@@ -121,43 +108,35 @@ if [ "$status" != "Accepted" ]; then
 fi
 rail_set "$RAIL_SUBMIT_ID" done
 
-# 4. Staple the ticket (optional).
-if [ "$staple_on" = "0" ]; then
-    rail_set "$RAIL_STAPLE_ID" running
-    set_status "Stapling notarization ticket..."
-    staple_app "$target"
-    if [ "$?" != "0" ]; then
-        rail_set "$RAIL_STAPLE_ID" failed
-        set_status "Stapling failed."
-        "$alert_tool" --level stop --title "Notarize" "Stapling the ticket failed. See the log."
-        finish
-        exit 0
-    fi
-    rail_set "$RAIL_STAPLE_ID" done
-else
-    rail_set "$RAIL_STAPLE_ID" skipped
+# 4. Staple the ticket
+rail_set "$RAIL_STAPLE_ID" running
+set_status "Stapling notarization ticket..."
+staple_app "$target"
+if [ "$?" != "0" ]; then
+	rail_set "$RAIL_STAPLE_ID" failed
+	set_status "Stapling failed."
+	"$alert_tool" --level stop --title "Notarize" "Stapling the ticket failed. See the log."
+	finish
+	exit 0
 fi
+rail_set "$RAIL_STAPLE_ID" done
 
-# 5. Distribution archive (optional).
-if [ "$zip_on" = "0" ]; then
-    rail_set "$RAIL_PACKAGE_ID" running
-    set_status "Creating distribution archive..."
-    dist="$(dist_zip_path "$target" "$output_dir")"
-    append_log "Creating distribution archive: $dist"
-    package_app "$target" "$dist"
-    if [ "$?" != "0" ]; then
-        rail_set "$RAIL_PACKAGE_ID" failed
-        set_status "Distribution packaging failed."
-        "$alert_tool" --level stop --title "Notarize" "Could not create the distribution archive."
-        finish
-        exit 0
-    fi
-    printf '%s' "$dist" > "$(state_dir)/dist.txt"
-    show_view "$REVEAL_BTN_ID" 1
-    rail_set "$RAIL_PACKAGE_ID" done
-else
-    rail_set "$RAIL_PACKAGE_ID" skipped
+# 5. Distribution archive
+rail_set "$RAIL_PACKAGE_ID" running
+set_status "Creating distribution archive..."
+dist="$(dist_zip_path "$target" "$output_dir")"
+append_log "Creating distribution archive: $dist"
+package_app "$target" "$dist"
+if [ "$?" != "0" ]; then
+	rail_set "$RAIL_PACKAGE_ID" failed
+	set_status "Distribution packaging failed."
+	"$alert_tool" --level stop --title "Notarize" "Could not create the distribution archive."
+	finish
+	exit 0
 fi
+printf '%s' "$dist" > "$(state_dir)/dist.txt"
+show_view "$REVEAL_BTN_ID" 1
+rail_set "$RAIL_PACKAGE_ID" done
 
 # 6. Final Gatekeeper assessment.
 rail_set "$RAIL_VALIDATE_ID" running
