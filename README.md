@@ -10,8 +10,6 @@ A native macOS GUI for Apple's notarization workflow. Drop an app on Notarize an
 
 Notarize wraps the Apple toolchain (`codesign`, `xcrun notarytool`, `stapler`) in a single document window: drop or open a `.app`, pick a credential profile, and click **Notarize**. Each app being notarized gets its own window; a secondary sheet handles credential setup.
 
-Notarize is built on the [OMC](https://abracode.com) framework with an ActionUI declarative UI engine. The UI is defined in `Contents/Resources/Base.lproj/`; all logic runs as POSIX shell scripts in `Contents/Resources/Scripts/`, shelling out to the system signing and notary tools. Notary output (JSON or plist) is parsed natively by OMC's `plister` tool, so no embedded interpreter is needed.
-
 ---
 
 ## Requirements
