@@ -85,6 +85,9 @@ PB_BUSY="ntz_busy_${document_uuid}"
 PB_SUBMISSION="ntz_submission_${document_uuid}"
 # Credential wizard state, keyed to the credential window itself
 PB_CRED_METHOD="ntz_credmethod_${window_uuid}"
+# The profile this wizard has just written credentials into. Only used to keep
+# the collision hint from contradicting the success message still on screen.
+PB_CRED_SAVED="ntz_credsaved_${window_uuid}"
 
 # --- Debug logging (gated on a flag file) ---
 DEBUG=false
@@ -332,6 +335,102 @@ known_profiles_add() {
 # Print known profile names, one per line.
 known_profiles_list() {
     "$plister" iterate "$prefs_file" /known_profiles get value / 2>/dev/null
+}
+
+# Answer whether this app has already registered a profile of this name. Free
+# and offline, but only as complete as this app's own history. Arguments: name
+#
+# The pattern goes after -e, not as a bare operand: profile names are typed by
+# the developer, and one starting with a dash would otherwise be read as grep's
+# own options. That is not a hypothetical - "grep -q -x -F -v" leaves grep with
+# no pattern at all, so it prints a usage error and exits 2, which reads here as
+# a confident "no".
+known_profile() {
+    [ -n "$1" ] || return 1
+    # An embedded newline is a pattern separator to grep -F, not a literal, so a
+    # name containing one would be answered about either half of itself. Such a
+    # name is refused before it can be saved; refuse to claim knowledge of it too.
+    local newline='
+'
+    case "$1" in
+        *"$newline"*) return 1 ;;
+    esac
+    known_profiles_list | /usr/bin/grep -q -x -F -e "$1"
+}
+
+# Print why a profile name cannot be used, or nothing at all when it can.
+# Arguments: name
+profile_name_problem() {
+    if [ -z "$1" ]; then
+        printf 'Enter a profile name.'
+        return 0
+    fi
+    # Not empty, but nothing a person could tell from empty in the picker or in
+    # default_profile.
+    if ! printf '%s' "$1" | /usr/bin/grep -q '[^[:space:]]'; then
+        printf 'Enter a profile name that is more than spaces.'
+        return 0
+    fi
+    local newline='
+'
+    case "$1" in
+        *"$newline"*)
+            printf 'A profile name cannot contain a line break.'
+            return 0
+            ;;
+        -*)
+            # notarytool reads a leading dash as one of its own options and
+            # answers "Missing value for '--keychain-profile'", so a name like
+            # this can never be stored or used - better to say so than to let
+            # the developer discover it as a parse error.
+            printf 'A profile name cannot start with a dash.'
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# Answer whether a notary keychain profile of this name already exists, so that
+# "notarytool store-credentials" would overwrite it rather than create it. The
+# tool documents that argument as "the profile name to create or update" and has
+# no flag to refuse an update, so this is the only place the question can be
+# asked. Arguments: profile_name
+# Returns 0 when the profile exists or cannot be shown not to, 1 when it does not.
+notary_profile_exists() {
+    # Profiles this app registered are known offline and for certain, and that
+    # is the common case - a name reused from an earlier run of this wizard - so
+    # it is asked first and costs nothing.
+    if known_profile "$1"; then
+        return 0
+    fi
+    # Otherwise notarytool has to be asked. Its profiles live in Apple's data
+    # protection keychain (access group com.apple.gke.notary), which other
+    # processes cannot enumerate - "security find-generic-password" does not see
+    # them at all - so existence has to be probed one name at a time.
+    #
+    # A missing profile is answered locally and immediately, before any network
+    # call: exit 69 and "Error: No Keychain password item found for profile: X".
+    # Anything else - a working profile, expired credentials, no network - means
+    # the keychain item is there or cannot be ruled out, and both have to count
+    # as "exists". Being wrong that way costs a confirmation the developer did
+    # not need; being wrong the other way destroys credentials without asking.
+    #
+    # Declared apart from its assignment so the next line reads notarytool's exit
+    # status and not local's, which is always 0.
+    local probe
+    probe="$(/usr/bin/xcrun notarytool history --keychain-profile "$1" 2>&1)"
+    local rc=$?
+    # Absence is the only answer that permits an overwrite, so both halves have
+    # to agree: the command failed, and it failed in the one way that means this.
+    # The message alone could be produced by a profile that does exist - "history"
+    # prints a "name:" line per submission, so notarizing a file named after the
+    # error would put the text in a successful listing - and that false negative
+    # is precisely the one that costs credentials.
+    [ "$rc" != "0" ] || return 0
+    case "$probe" in
+        *"Error: No Keychain password item found for profile:"*) return 1 ;;
+    esac
+    return 0
 }
 
 # --- Discovery --------------------------------------------------------------

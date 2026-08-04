@@ -81,6 +81,10 @@ Settings are remembered per target, keyed by bundle identifier for an app and by
 
 Opened from the **Credentials...** button, a guided wizard creates and validates a notary keychain profile with `notarytool store-credentials`, choosing Apple ID or API-key authentication. It does not require an app to be loaded. Set credentials up once, then notarize many apps.
 
+An existing profile is never replaced without asking. `notarytool store-credentials` treats its profile name as one "to create or update" and overwrites a matching profile in place, with no prompt and no way to recover what was there - the credentials it replaces cannot be read back out of the keychain by anything, including this app. That is easy to walk into: the wizard suggests a name, and the suggestion survives backing out and choosing a different authentication method, so an API-key save can land on the name an Apple ID profile is already using. So the wizard flags a name it already knows as soon as you type it, and confirms before it writes over anything - cancelling leaves the stored credentials exactly as they were.
+
+Profiles created outside this app are checked too. They cannot be listed - `notarytool` keeps them in Apple's data protection keychain, where `security find-generic-password` cannot see them - so the wizard asks `notarytool` about the one name you typed. A name it has never registered and `notarytool` reports as absent is treated as free; anything else, including a profile whose credentials have expired or a notary service that cannot be reached, is treated as in use. Being wrong in that direction costs a confirmation you did not need. Being wrong the other way destroys credentials without asking.
+
 ---
 
 ## Individual Actions

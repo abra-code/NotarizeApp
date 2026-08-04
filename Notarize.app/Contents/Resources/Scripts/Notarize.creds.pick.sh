@@ -2,6 +2,12 @@
 # Notarize.creds.pick.sh - method chosen on step 1; advance the wizard
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
+# Choosing a method starts a new attempt, so the "do not warn about the profile
+# we just saved" exemption lapses here. Saving the same name again under a
+# different method really would overwrite what the last attempt stored, and that
+# is exactly the collision worth warning about.
+pb_set "$PB_CRED_SAVED" ""
+
 case "$OMC_ACTIONUI_TRIGGER_VIEW_ID" in
     "$CRED_PICK_APPLEID_ID")
         pb_set "$PB_CRED_METHOD" 1
