@@ -4,14 +4,15 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
 target="$(get_target)"
 if [ -z "$target" ]; then
-    "$alert_tool" --level caution --title "Notarize" "Choose an app to notarize first."
+    "$alert_tool" --level caution --title "Notarize" "Choose an app or installer package to notarize first."
     exit 0
 fi
-is_app_bundle "$target"
+is_supported_target "$target"
 if [ "$?" != "0" ]; then
-    "$alert_tool" --level caution --title "Notarize" "The chosen item is not a .app bundle."
+    "$alert_tool" --level caution --title "Notarize" "$(unsupported_target_reason "$target")"
     exit 0
 fi
+kind="$(target_kind_of "$target")"
 
 profile="$(selected_profile)"
 if [ -z "$profile" ]; then
@@ -23,10 +24,12 @@ entitlements="$(view_value "$ENTITLEMENTS_FIELD_ID")"
 output_dir="$(view_value "$OUTPUT_FIELD_ID")"
 identity="$(selected_identity)"
 
-if [ -z "$identity" ]; then
-    "$alert_tool" --level caution --title "Notarize" "No Developer ID Application identity is available. Install a Developer ID certificate."
-    exit 0
-fi
+# An empty identity is not fatal here, and it means one of two things: the
+# developer picked the "Don't Code-sign" row, or the keychain holds no
+# certificate of the class this target needs. Either way notarizing requires the
+# artifact to be signed, not for us to be the ones who signed it, so a target
+# that already carries a valid Developer ID signature can go straight to the
+# notary service. The sign stage decides, once it can see what is on disk.
 
 save_app_settings
 
@@ -55,36 +58,109 @@ append_log "=== Notarize: $(/usr/bin/basename "$target") ==="
 # 1. Copy to the output folder (never release-sign the development copy in
 # place), then sign the copy.
 rail_set "$RAIL_SIGN_ID" running
-set_status "Signing for release..."
+set_status "Preparing..."
 work="$(prepare_release_copy "$target" "$output_dir")"
 if [ "$?" != "0" ] || [ -z "$work" ]; then
 	rail_set "$RAIL_SIGN_ID" failed
 	set_status "Copy to the output folder failed."
-	"$alert_tool" --level stop --title "Notarize" "Could not copy the app to the output folder."
+	"$alert_tool" --level stop --title "Notarize" "Could not copy the target to the output folder."
 	finish
 	exit 0
 fi
-if [ "$work" != "$target" ]; then
+if made_release_copy; then
 	append_log "Copied to output folder: $work"
 fi
-sign_app "$work" "$identity" "$entitlements"
-if [ "$?" != "0" ]; then
-	rail_set "$RAIL_SIGN_ID" failed
-	set_status "Signing failed."
-	"$alert_tool" --level stop --title "Notarize" "Code signing failed. See the log."
-	finish
-	exit 0
-fi
-# codesign_applet.sh already verified the signature (--deep --strict) and
-# failed the sign step on any problem, so no separate check stage is needed.
-rail_set "$RAIL_SIGN_ID" done
 
-# 2. Package for upload.
+if [ -z "$identity" ]; then
+	# Nothing to sign with, or nothing the developer wants signed. Notarizing
+	# does not require a certificate here - only a target already signed with a
+	# Developer ID does - so check what is there rather than refusing outright.
+	set_status "Checking the existing signature..."
+	append_log "--- Signing skipped ---"
+	append_log "Not signing: $(not_signing_reason). The existing signature has to stand on its own."
+	# Same check as the matching case, asked without an identity: not "does this
+	# match what was selected" but "would the notary service accept this at all".
+	unsigned_why="$(resign_reason "$work" "" "")"
+	if [ -n "$unsigned_why" ]; then
+		rail_set "$RAIL_SIGN_ID" failed
+		set_status "The target is not properly signed."
+		append_log "ERROR: $unsigned_why."
+		# The advice stays the same for both reasons on purpose: "pick an
+		# identity" is not actionable when there is no certificate to pick, and
+		# not_signing_reason has already said which of the two applies.
+		"$alert_tool" --level stop --title "Notarize" "Nothing was signed because $(not_signing_reason), and this cannot be notarized as it is: $unsigned_why. It has to carry a valid Developer ID signature before the notary service will take it."
+		finish
+		exit 0
+	fi
+	rail_set "$RAIL_SIGN_ID" skipped
+	append_log "The existing signature is valid for distribution; nothing was re-signed."
+	append_log "-----------------------"
+else
+	# Signing is a replacement, not an amendment: it discards the existing
+	# signature and, for a package, the notarization ticket stapled to it. When
+	# every setting in this window already matches what is on disk, repeating it
+	# would produce a byte-for-byte equivalent result, so the pipeline leaves it
+	# alone. Only the pipeline does this - Actions > Sign Only always signs.
+	set_status "Checking the existing signature..."
+	sign_why="$(resign_reason "$work" "$identity" "$entitlements")"
+	if [ -z "$sign_why" ]; then
+		rail_set "$RAIL_SIGN_ID" skipped
+		set_status "Already signed as requested; not re-signing."
+		append_log "--- Signing skipped ---"
+		append_log "The existing signature already matches every setting in this window, so re-signing would change nothing:"
+		append_log "  identity: $identity"
+		if [ "$kind" = "pkg" ]; then
+			append_log "  trusted timestamp: present"
+		else
+			append_log "  hardened runtime: present"
+			append_log "  secure timestamp: present"
+			if [ -n "$entitlements" ]; then
+				append_log "  entitlements: identical to $entitlements"
+			else
+				append_log "  entitlements: unchanged (none specified in this window)"
+			fi
+		fi
+		append_log "To sign anyway, use Actions > Sign Only, which never skips."
+		append_log "-----------------------"
+	else
+		set_status "Signing for release..."
+		append_log "Signing because $sign_why."
+		sign_target "$work" "$identity" "$entitlements"
+		if [ "$?" != "0" ]; then
+			rail_set "$RAIL_SIGN_ID" failed
+			set_status "Signing failed."
+			"$alert_tool" --level stop --title "Notarize" "Signing failed. See the log."
+			finish
+			exit 0
+		fi
+		# For an app, codesign_applet.sh already verified the signature
+		# (--deep --strict) and failed the step on any problem. For a package,
+		# confirm productsign's result actually landed on disk.
+		if [ "$kind" = "pkg" ]; then
+			run_pkg_signature_check "$work"
+			if [ "$?" != "0" ]; then
+				rail_set "$RAIL_SIGN_ID" failed
+				set_status "Signing did not produce a signed package."
+				"$alert_tool" --level stop --title "Notarize" "The package is still unsigned after productsign. See the log."
+				finish
+				exit 0
+			fi
+		fi
+		rail_set "$RAIL_SIGN_ID" done
+	fi
+fi
+
+# 2. Prepare the upload. An app has to be zipped; the notary service takes a
+# flat package as it is.
 rail_set "$RAIL_SUBMIT_ID" running
-set_status "Packaging for upload..."
-append_log "Packaging for upload..."
-upload_zip="$(state_dir)/upload.zip"
-package_app "$work" "$upload_zip"
+if [ "$kind" = "pkg" ]; then
+    set_status "Preparing the upload..."
+    append_log "Uploading the package itself; no archive needed."
+else
+    set_status "Packaging for upload..."
+    append_log "Packaging for upload..."
+fi
+prepare_upload "$work"
 if [ "$?" != "0" ]; then
     rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Packaging failed."
@@ -95,7 +171,7 @@ fi
 
 # 3. Submit and wait for the notary service.
 set_status "Submitting to the notary service..."
-submit_and_wait "$upload_zip" "$profile"
+submit_and_wait "$(upload_path)" "$profile"
 if [ "$?" != "0" ]; then
     rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Submission failed."
@@ -136,10 +212,16 @@ rail_set "$RAIL_VALIDATE_ID" running
 run_spctl "$work"
 if [ "$?" = "0" ]; then
     rail_set "$RAIL_VALIDATE_ID" done
+    append_log "Done. Accepted, stapled, and ready at: $work"
+    set_status "Done. Notarized and ready for distribution."
+    "$notify_tool" --title "Notarize" "$(/usr/bin/basename "$target") is notarized and ready."
 else
+    # The ticket is stapled but Gatekeeper still refused the result. Saying
+    # "ready for distribution" here would contradict the log and the red rail
+    # icon, and this is exactly the outcome someone needs to be told about.
     rail_set "$RAIL_VALIDATE_ID" failed
+    append_log "WARNING: stapled, but Gatekeeper did not accept the result. See the assessment above."
+    set_status "Stapled, but Gatekeeper rejected it."
+    "$notify_tool" --title "Notarize" "$(/usr/bin/basename "$target") was stapled, but Gatekeeper rejected it."
 fi
-append_log "Done. Accepted, stapled, and ready at: $work"
-set_status "Done. Notarized and ready for distribution."
-"$notify_tool" --title "Notarize" "$(/usr/bin/basename "$target") is notarized and ready."
 finish

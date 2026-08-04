@@ -19,7 +19,7 @@ show_view "$CRED_HINT_EXISTING_ID" 0
 # Prefill the team id from the default identity, if discoverable.
 def_id="$(prefs_get default_identity)"
 if [ -z "$def_id" ]; then
-    def_id="$(list_developer_id_identities | /usr/bin/head -n 1)"
+    def_id="$(list_signing_identities app | /usr/bin/head -n 1)"
 fi
 team="$(team_from_identity "$def_id")"
 if [ -n "$team" ]; then

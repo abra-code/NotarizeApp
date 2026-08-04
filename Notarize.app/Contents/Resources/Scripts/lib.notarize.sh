@@ -227,17 +227,66 @@ prefs_set() {
 # Fields: output_dir, entitlements, and - only when they differ from the
 # global defaults - identity and profile.
 
-# Print the prefs key for the current target app (empty if no target).
+# Print an installer package's identifier without expanding its payload: xar
+# pulls out the single metadata member and the identifier is read from it.
+# productbuild packages carry a Distribution, bare pkgbuild ones a PackageInfo.
+# Prints nothing if neither can be read. Arguments: pkg_path
+package_identifier() {
+    local work="$(state_dir)/pkgid"
+    # Set in either of two branches below, or in neither.
+    local id
+    /bin/rm -rf "$work"
+    /bin/mkdir -p "$work" || return 0
+
+    (cd "$work" && /usr/bin/xar -x -f "$1" Distribution 2>/dev/null)
+    if [ -f "$work/Distribution" ]; then
+        id="$(/usr/bin/sed -n 's/.*<pkg-ref id="\([^"]*\)".*/\1/p' "$work/Distribution" | /usr/bin/head -n 1)"
+    fi
+    if [ -z "$id" ]; then
+        (cd "$work" && /usr/bin/xar -x -f "$1" PackageInfo 2>/dev/null)
+        if [ -f "$work/PackageInfo" ]; then
+            id="$(/usr/bin/sed -n 's/.*identifier="\([^"]*\)".*/\1/p' "$work/PackageInfo" | /usr/bin/head -n 1)"
+        fi
+    fi
+
+    /bin/rm -rf "$work"
+    printf '%s' "$id"
+}
+
+# Print the prefs key for the current target (empty if no target). Keyed by
+# bundle identifier for an app and package identifier for a package, so settings
+# follow the product rather than a file name that carries a version number.
+# Falls back to the file name when no identifier can be read.
 app_prefs_key() {
     local target="$(get_target)"
     if [ -z "$target" ]; then
         return 0
     fi
-    local bid="$("$plister" get value "$target/Contents/Info.plist" /CFBundleIdentifier 2>/dev/null)"
-    if [ -z "$bid" ]; then
-        bid="$(/usr/bin/basename "$target")"
+    # Cached, because apply_app_settings and save_app_settings each call this
+    # once per remembered field. For a package the answer costs an xar read of
+    # the archive's table of contents, so without this a single target switch
+    # would open the package half a dozen times. Two lines: the target it was
+    # computed for, then the key. A target path containing a newline simply
+    # never matches and is recomputed, which is the safe way to be wrong.
+    local cache="$(state_dir)/prefs_key.txt"
+    if [ -f "$cache" ] && [ "$(/usr/bin/sed -n 1p "$cache")" = "$target" ]; then
+        /usr/bin/sed -n 2p "$cache"
+        return 0
     fi
-    printf '%s' "$bid"
+
+    # Set in one branch or the other, so it is declared before either.
+    local key
+    if [ "$(target_kind_of "$target")" = "pkg" ]; then
+        key="$(package_identifier "$target")"
+    else
+        key="$("$plister" get value "$target/Contents/Info.plist" /CFBundleIdentifier 2>/dev/null)"
+    fi
+    if [ -z "$key" ]; then
+        key="$(/usr/bin/basename "$target")"
+    fi
+
+    printf '%s\n%s\n' "$target" "$key" > "$cache"
+    printf '%s' "$key"
 }
 
 # Print a per-app prefs value for the current target (empty if unset). Arguments: field
@@ -286,11 +335,64 @@ known_profiles_list() {
 }
 
 # --- Discovery --------------------------------------------------------------
-# Print available "Developer ID Application" identities, one full name per line.
-list_developer_id_identities() {
-    /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
-        | /usr/bin/grep "Developer ID Application" \
+# The last row of the signing identity picker, which stands for "leave the
+# existing signature alone". Re-signing is a replacement, not an amendment, and
+# an app assembled by a build system that this window cannot reproduce - nested
+# code signed with entitlements of its own, a designated requirement that has to
+# survive - comes out of a re-sign subtly different from what was tested. That
+# is the developer's call to make, so it is offered as a choice rather than
+# guessed at.
+NO_SIGN_OPTION="Don't Code-sign"
+# What that choice is remembered as, per target, in prefs. It cannot collide
+# with a real identity: list_signing_identities only ever yields names holding
+# "Developer ID Application" or "Developer ID Installer".
+NO_SIGN_PREF="none"
+
+# Print the signing identities usable for a target kind, one full name per line.
+#
+# An app needs a "Developer ID Application" certificate and a package needs a
+# "Developer ID Installer" one - productsign rejects the other. The policy
+# differs too: an installer certificate is not valid for the codesigning policy
+# and does not appear under "-p codesigning" at all, so packages are looked up
+# under "-p basic". Arguments: kind ("app" or "pkg")
+list_signing_identities() {
+    local certificate_class policy
+    if [ "$1" = "pkg" ]; then
+        certificate_class="Developer ID Installer"
+        policy="basic"
+    else
+        certificate_class="Developer ID Application"
+        policy="codesigning"
+    fi
+    /usr/bin/security find-identity -v -p "$policy" 2>/dev/null \
+        | /usr/bin/grep "$certificate_class" \
         | /usr/bin/sed 's/.*"\(.*\)".*/\1/'
+}
+
+# Print why nothing is being signed, given that no identity is selected: either
+# the developer picked the "Don't Code-sign" row, or there is no certificate of
+# the right class to pick. The outcome is the same but the situations are not,
+# and a log that does not say which leaves the developer guessing.
+#
+# Takes no argument on purpose. It used to accept a kind for the lookup while
+# naming the class through required_certificate_class, which reads the current
+# target - so a caller passing anything else would have searched one certificate
+# class and reported the other. One source for both settles it.
+not_signing_reason() {
+    if [ -n "$(list_signing_identities "$(current_kind)")" ]; then
+        printf '"%s" is selected in the signing identity picker' "$NO_SIGN_OPTION"
+    else
+        printf 'no %s certificate is available in your keychain' "$(required_certificate_class)"
+    fi
+}
+
+# Print the certificate class the current target needs, for error messages.
+required_certificate_class() {
+    if [ "$(current_kind)" = "pkg" ]; then
+        printf '%s' "Developer ID Installer"
+    else
+        printf '%s' "Developer ID Application"
+    fi
 }
 
 # Extract the team id (trailing parenthesized token) from an identity name.
@@ -308,13 +410,103 @@ json_array_from_lines() {
         END { printf "]" }'
 }
 
-# --- Target app -------------------------------------------------------------
-# Succeed (0) if the path is a .app bundle directory. Arguments: path
-is_app_bundle() {
+# --- Target kind -------------------------------------------------------------
+# Notarize accepts two kinds of target and they differ at every step that
+# touches a signature or an upload:
+#
+#   app  a .app bundle. Signed with codesign (hardened runtime, entitlements),
+#        uploaded inside a ditto zip, assessed with spctl --type execute.
+#   pkg  a flat installer package. Signed with productsign using a Developer ID
+#        *Installer* identity, uploaded as-is because the notary service accepts
+#        .pkg directly, assessed with spctl --type install.
+#
+# Stapling is the only stage that is identical for both.
+
+# Print "app", "pkg", or nothing at all. Arguments: path
+target_kind_of() {
     case "$1" in
-        *.app) [ -d "$1" ] ;;
-        *) return 1 ;;
+        *.app) if [ -d "$1" ]; then printf 'app'; fi ;;
+        # Only flat packages. Old bundle-style .pkg/.mpkg are directories and the
+        # notary service does not accept them; is_supported_target reports that
+        # case rather than letting it fail later at upload time.
+        *.pkg|*.mpkg) if [ -f "$1" ]; then printf 'pkg'; fi ;;
     esac
+}
+
+# Print the kind of the current target.
+current_kind() {
+    target_kind_of "$(get_target)"
+}
+
+# --- Target -----------------------------------------------------------------
+# Succeed (0) if the path is something this app can notarize. Arguments: path
+is_supported_target() {
+    [ -n "$(target_kind_of "$1")" ]
+}
+
+# Print the reason a path was rejected, for the alert shown to the user.
+# Arguments: path
+unsupported_target_reason() {
+    case "$1" in
+        *.pkg|*.mpkg)
+            if [ -d "$1" ]; then
+                printf '%s' "That is an old bundle-style installer package. The notary service only accepts flat packages, which is what productbuild creates."
+                return 0
+            fi
+            ;;
+    esac
+    printf '%s' "Choose an application bundle (.app) or a flat installer package (.pkg)."
+}
+
+# Canonicalize a file or directory path, resolving symlinks all the way down.
+# Prints nothing and returns 1 on failure. Arguments: path
+#
+# "cd -P" into a directory resolves symlinks in the whole path including the
+# last component, which is what the .app branch relies on. A file cannot be
+# cd'd into, so its final component has to be resolved by hand - otherwise the
+# two branches disagree, and prepare_release_copy's same-folder guard can be
+# walked straight past by a symlink whose name matches its target's: the guard
+# compares directories, decides they differ, and rm -rf's the real file the
+# symlink points at.
+canonical_path() {
+    # "dir" is declared apart from its assignments because they are guarded by
+    # "|| return 1": written as "local dir=$(...) || return 1" the guard would
+    # test local's own status, which is always 0, and a failed cd would go
+    # unnoticed. "link" is set only while the loop runs.
+    local dir link
+    if [ -d "$1" ]; then
+        dir="$(cd -P "$1" 2>/dev/null && /bin/pwd -P)" || return 1
+        [ -n "$dir" ] || return 1
+        printf '%s' "$dir"
+        return 0
+    fi
+
+    local target="$1"
+    local hops=0
+    while [ -L "$target" ] && [ "$hops" -lt 40 ]; do
+        link="$(/usr/bin/readlink "$target")"
+        [ -n "$link" ] || break
+        case "$link" in
+            /*) target="$link" ;;
+            *) target="$(/usr/bin/dirname "$target")/$link" ;;
+        esac
+        hops=$((hops + 1))
+    done
+    # Still a symlink means a loop, or a chain longer than the loop allows.
+    # Returning the last hop would be a confidently wrong path feeding a
+    # destructive guard, so report failure instead.
+    [ -L "$target" ] && return 1
+
+    dir="$(/usr/bin/dirname "$target")"
+    local base="$(/usr/bin/basename "$target")"
+    # "cd -P", not plain "cd": a relative link like "../c/pkg" leaves a ".." in
+    # the path above, and logical cd collapses that lexically, before resolving
+    # any symlink in the prefix. With "b" a symlink to "a/b", logical cd turns
+    # "x/b/../c" into "x/c" while the real location is "a/c" - a wrong answer
+    # that would let prepare_release_copy's same-folder guard through.
+    dir="$(cd -P "$dir" 2>/dev/null && /bin/pwd -P)" || return 1
+    [ -n "$dir" ] || return 1
+    printf '%s/%s' "$dir" "$base"
 }
 
 # Strip the file:// scheme (and optional host) and percent-decode a file URL.
@@ -329,6 +521,7 @@ url_to_path() {
 set_target() {
     printf '%s' "$1" > "$(state_dir)/target.txt"
     /bin/rm -f "$(state_dir)/release.txt"
+    /bin/rm -f "$(state_dir)/prefs_key.txt"
 }
 
 # Print the stored target app path (empty if none).
@@ -337,6 +530,14 @@ get_target() {
     if [ -f "$f" ]; then
         /bin/cat "$f"
     fi
+}
+
+# Succeed (0) if the last prepare_release_copy actually made a copy. Callers
+# use this rather than comparing its result against the chosen target, which no
+# longer works now that it returns a resolved path: a symlinked target differs
+# from its resolved form without any copy having been made.
+made_release_copy() {
+    [ -f "$(state_dir)/release.txt" ]
 }
 
 # Print the path the pipeline operates on: the release copy when one was made
@@ -373,18 +574,6 @@ detect_entitlements() {
     return 0
 }
 
-# Select an identity in the picker by name (no-op when empty or not installed).
-# Arguments: identity_name
-select_identity() {
-    if [ -z "$1" ]; then
-        return 0
-    fi
-    local idx="$(/usr/bin/grep -n -x -F "$1" "$(state_dir)/identities.txt" 2>/dev/null | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
-    if [ -n "$idx" ]; then
-        "$dialog_tool" "$document_uuid" "$IDENTITY_PICKER_ID" "$idx"
-    fi
-}
-
 # Fill the settings fields for the current target from its remembered per-app
 # prefs, falling back to auto-detection (entitlements) and the global defaults
 # (identity, profile). Call after set_target with the pickers already populated.
@@ -394,22 +583,25 @@ apply_app_settings() {
         return 0
     fi
 
-    # Output folder is remembered per app only (empty = next to the app).
+    # Output folder is remembered per target only (empty = next to the target).
     set_value "$OUTPUT_FIELD_ID" "$(app_pref_get output_dir)"
 
-    # Entitlements: the remembered file, else one found next to the app.
-    local ent="$(app_pref_get entitlements)"
-    if [ -z "$ent" ] || [ ! -f "$ent" ]; then
-        ent="$(detect_entitlements "$target")"
+    # Entitlements: the remembered file, else one found next to the app. A
+    # package has no entitlements; its row is hidden by refresh_target_ui.
+    if [ "$(target_kind_of "$target")" != "pkg" ]; then
+        local ent="$(app_pref_get entitlements)"
+        if [ -z "$ent" ] || [ ! -f "$ent" ]; then
+            ent="$(detect_entitlements "$target")"
+        fi
+        set_value "$ENTITLEMENTS_FIELD_ID" "$ent"
     fi
-    set_value "$ENTITLEMENTS_FIELD_ID" "$ent"
 
-    # Identity and profile: per-app override, else the global default.
-    local identity="$(app_pref_get identity)"
-    if [ -z "$identity" ]; then
-        identity="$(prefs_get default_identity)"
-    fi
-    select_identity "$identity"
+    # Identity and profile: per-target override, else the global default for
+    # this kind. refresh_identity_picker repopulates the options first, because
+    # the two kinds draw from different certificate classes. A remembered
+    # NO_SIGN_PREF selects the "Don't Code-sign" row, so a target that must not
+    # be re-signed stays that way across relaunches.
+    refresh_identity_picker "$(app_pref_get identity)"
     refresh_profile_picker "$(app_pref_get profile)"
 }
 
@@ -424,13 +616,17 @@ save_app_settings() {
     fi
 
     app_pref_set output_dir "$(view_value "$OUTPUT_FIELD_ID")"
-    app_pref_set entitlements "$(view_value "$ENTITLEMENTS_FIELD_ID")"
+    if [ "$(target_kind_of "$target")" != "pkg" ]; then
+        app_pref_set entitlements "$(view_value "$ENTITLEMENTS_FIELD_ID")"
+    fi
 
+    local identity_key="$(default_identity_key "$(target_kind_of "$target")")"
     local identity="$(selected_identity)"
+    local def_identity
     if [ -n "$identity" ]; then
-        local def_identity="$(prefs_get default_identity)"
+        def_identity="$(prefs_get "$identity_key")"
         if [ -z "$def_identity" ]; then
-            prefs_set default_identity "$identity"
+            prefs_set "$identity_key" "$identity"
             def_identity="$identity"
         fi
         if [ "$identity" = "$def_identity" ]; then
@@ -438,11 +634,23 @@ save_app_settings() {
         else
             app_pref_set identity "$identity"
         fi
+    elif signing_declined_by_choice; then
+        # "Don't Code-sign" is remembered for this target only, never promoted to
+        # the global default. It is a statement about one artifact that re-signing
+        # would damage, not a preference about signing in general, and a target
+        # that has never been seen before should still default to signing.
+        #
+        # Only when it was chosen, though - see signing_declined_by_choice. An
+        # empty identity that was forced, or that came out of a lookup going
+        # wrong, says nothing, so nothing is written and any earlier real choice
+        # stands rather than being overwritten by it.
+        app_pref_set identity "$NO_SIGN_PREF"
     fi
 
     local profile="$(selected_profile)"
+    local def_profile
     if [ -n "$profile" ]; then
-        local def_profile="$(prefs_get default_profile)"
+        def_profile="$(prefs_get default_profile)"
         if [ -z "$def_profile" ]; then
             prefs_set default_profile "$profile"
             def_profile="$profile"
@@ -455,32 +663,127 @@ save_app_settings() {
     fi
 }
 
-# Reflect the current target in the window: path label, status, button state.
+# Enable or disable the entitlements field and its Browse button for a target
+# kind, clearing the field when it does not apply. Arguments: kind
+set_entitlements_enabled() {
+    if [ "$1" = "pkg" ]; then
+        set_value "$ENTITLEMENTS_FIELD_ID" ""
+        enable_view "$ENTITLEMENTS_FIELD_ID" 0
+        enable_view "$ENTITLEMENTS_BROWSE_ID" 0
+    else
+        enable_view "$ENTITLEMENTS_FIELD_ID" 1
+        enable_view "$ENTITLEMENTS_BROWSE_ID" 1
+    fi
+}
+
+# Reflect the current target in the window: path label, status, button state,
+# and the rows that only apply to one kind of target.
 refresh_target_ui() {
     local target="$(get_target)"
     if [ -n "$target" ]; then
+        local kind="$(target_kind_of "$target")"
         set_value "$APP_PATH_ID" "$target"
+        # A package has no entitlements and no hardened runtime, so the field
+        # cannot affect the outcome. Disable it rather than hiding it: ActionUI
+        # maps "hidden" to SwiftUI's .hidden(), which is visual only and keeps
+        # the row's space, so hiding would leave an unexplained gap.
+        set_entitlements_enabled "$kind"
         apply_app_settings
         enable_view "$NOTARIZE_BTN_ID" 1
         rail_enable 1
-        set_status "Ready: $(/usr/bin/basename "$target")"
+        if [ "$kind" = "pkg" ]; then
+            set_status "Ready: $(/usr/bin/basename "$target") (installer package)"
+        else
+            set_status "Ready: $(/usr/bin/basename "$target")"
+        fi
     else
-        set_value "$APP_PATH_ID" "No app chosen - drop a .app on the log area or click Choose App."
+        set_entitlements_enabled "app"
+        set_value "$APP_PATH_ID" "Nothing chosen - drop a .app or .pkg here, or click Choose."
         enable_view "$NOTARIZE_BTN_ID" 0
         rail_enable 0
-        set_status "Drop an app to notarize, or choose one."
+        set_status "Drop an app or installer package to notarize, or choose one."
     fi
+}
+
+# Print the prefs key holding the default identity for a kind. The two
+# certificate classes are not interchangeable, so each kind remembers its own.
+# Arguments: kind ("app" or "pkg")
+default_identity_key() {
+    if [ "$1" = "pkg" ]; then
+        printf '%s' "default_installer_identity"
+    else
+        printf '%s' "default_identity"
+    fi
+}
+
+# Refill the identity picker with the identities valid for the current target
+# kind plus the trailing "Don't Code-sign" row, and select one: the given name
+# when it is installed, else the remembered default for that kind. The ordered
+# option list is persisted so handlers can resolve the picker's 1-based index
+# back to a name (OMC pickers deliver and accept the index, never the title).
+# Arguments: identity_name, NO_SIGN_PREF, or empty
+refresh_identity_picker() {
+    local kind="$(current_kind)"
+    local ids="$(list_signing_identities "$kind")"
+    local identities_file="$(state_dir)/identities.txt"
+
+    # identities.txt is the index-to-name map, so the "Don't Code-sign" row has
+    # to occupy a line in it too - an empty one. selected_identity then resolves
+    # that row to the empty identity every downstream step already reads as "not
+    # signing", and no certificate name can ever collide with it. The row goes
+    # last so that index 1, the fallback whenever nothing is remembered, lands on
+    # a real certificate when there is one and on this row when there is not.
+    local titles
+    if [ -n "$ids" ]; then
+        printf '%s\n\n' "$ids" > "$identities_file"
+        titles="$(printf '%s\n%s' "$ids" "$NO_SIGN_OPTION")"
+    else
+        printf '\n' > "$identities_file"
+        titles="$NO_SIGN_OPTION"
+    fi
+    "$dialog_tool" "$document_uuid" "$IDENTITY_PICKER_ID" omc_set_property options "$(printf '%s\n' "$titles" | json_array_from_lines)"
+
+    local sel="$1"
+    if [ -z "$sel" ]; then
+        sel="$(prefs_get "$(default_identity_key "$kind")")"
+    fi
+
+    # Always write an explicit index, never leave the previous one standing.
+    # A Picker is bound to the 1-based position in its option list, so swapping
+    # the list leaves the old index pointing at whatever now occupies that slot.
+    # Switching a window between an app and a package swaps the list for one
+    # drawn from a different certificate class entirely, and an unresolved name
+    # would silently leave a stale index selected - and selected_identity would
+    # then hand that wrong identity to the signing step.
+    local index=""
+    if [ "$sel" = "$NO_SIGN_PREF" ]; then
+        # Counted from the file rather than from "$ids" so the index and the map
+        # cannot disagree about where the last row is.
+        index="$(/usr/bin/grep -c '' "$identities_file")"
+    elif [ -n "$sel" ]; then
+        index="$(printf '%s\n' "$ids" | /usr/bin/grep -n -x -F "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
+    fi
+    # A remembered per-target certificate that is no longer installed falls back
+    # to the default for this kind, not to whatever happens to be first. Landing
+    # on position 1 would hand the target a certificate nobody picked, and
+    # save_app_settings would then write it back as a per-target override.
+    if [ -z "$index" ]; then
+        local default_identity="$(prefs_get "$(default_identity_key "$kind")")"
+        if [ -n "$default_identity" ] && [ "$default_identity" != "$sel" ]; then
+            index="$(printf '%s\n' "$ids" | /usr/bin/grep -n -x -F "$default_identity" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
+        fi
+    fi
+    if [ -z "$index" ]; then
+        index=1
+    fi
+    "$dialog_tool" "$document_uuid" "$IDENTITY_PICKER_ID" "$index"
 }
 
 # Fill the identity and profile pickers from discovery + prefs, and persist the
 # ordered option lists so handlers can resolve a picker's 1-based index to a name
 # (OMC pickers deliver the 1-based index, not the title).
 populate_pickers() {
-    local ids="$(list_developer_id_identities)"
-    printf '%s\n' "$ids" > "$(state_dir)/identities.txt"
-    set_property "$IDENTITY_PICKER_ID" options "$(printf '%s' "$ids" | json_array_from_lines)"
-    select_identity "$(prefs_get default_identity)"
-
+    refresh_identity_picker ""
     refresh_profile_picker ""
 }
 
@@ -500,13 +803,18 @@ refresh_profile_picker() {
     if [ -z "$sel" ]; then
         sel="$(prefs_get default_profile)"
     fi
+    # Always write an explicit index, as refresh_identity_picker does. A Picker
+    # is bound to the 1-based position in its option list, so replacing the list
+    # and leaving the index alone points it at whatever now occupies that slot -
+    # a different profile than the one named, chosen silently.
+    local idx=""
     if [ -n "$sel" ]; then
-        # Resolve the name to its 1-based index (pickers are set by index).
-        local idx="$(printf '%s\n' "$profs" | /usr/bin/grep -n -x -F "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
-        if [ -n "$idx" ]; then
-            "$dialog_tool" "$document_uuid" "$PROFILE_PICKER_ID" "$idx"
-        fi
+        idx="$(printf '%s\n' "$profs" | /usr/bin/grep -n -x -F "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
     fi
+    if [ -z "$idx" ]; then
+        idx=1
+    fi
+    "$dialog_tool" "$document_uuid" "$PROFILE_PICKER_ID" "$idx"
 }
 
 # --- Control value helpers --------------------------------------------------
@@ -515,18 +823,53 @@ view_value() {
     eval "printf '%s' \"\${OMC_ACTIONUI_VIEW_${1}_VALUE}\""
 }
 
-# Print the Nth (1-based) line of a file. Arguments: file, index
+# Print the Nth (1-based) line of a file, or nothing when there is no such line.
+# A missing file is one of the ways there is no such line, so sed's complaint
+# about it is noise on stderr rather than news. Arguments: file, index
 nth_line() {
-    /usr/bin/sed -n "${2}p" "$1"
+    /usr/bin/sed -n "${2}p" "$1" 2>/dev/null
 }
 
-# Resolve the identity picker's 1-based index to the identity name.
+# Resolve the identity picker's 1-based index to the identity name. Prints
+# nothing when the "Don't Code-sign" row is selected: refresh_identity_picker
+# gives that row an empty line in the map, so it arrives here as the empty
+# identity that sign_target, resign_reason and the pipeline already understand.
 selected_identity() {
     local idx="$(view_value "$IDENTITY_PICKER_ID")"
     if [ -z "$idx" ]; then
         idx=1
     fi
     nth_line "$(state_dir)/identities.txt" "$idx"
+}
+
+# Answer whether the developer actually chose "Don't Code-sign" from a picker
+# that was also offering at least one certificate. Only then is an empty identity
+# a decision worth remembering.
+#
+# selected_identity returning nothing is not enough to conclude that. It is also
+# what a missing map file or an out-of-range index produces, and recording either
+# as a decline would pin a target to "Don't Code-sign" over a lookup that simply
+# went wrong. The question is answered from the map the picker was built from -
+# the one the developer was actually looking at - rather than by asking the
+# keychain again: the picker is populated when the window opens or the target
+# changes and is not rebuilt when the keychain changes underneath it, so a fresh
+# "security find-identity" at save time answers about a list that was never on
+# screen. That drifts in both directions - a certificate unlocked mid-session
+# makes a forced decline look chosen, and a certificate that disappears makes a
+# deliberate one look forced and drops it.
+# Returns 0 when the decline row was chosen from a picker that offered more.
+signing_declined_by_choice() {
+    local map="$(state_dir)/identities.txt"
+    [ -f "$map" ] || return 1
+    # One row means the decline row was the only thing on offer, so selecting it
+    # was not a choice - it was the absence of one.
+    local rows="$(/usr/bin/grep -c '' "$map")"
+    [ "$rows" -gt 1 ] 2>/dev/null || return 1
+    local index="$(view_value "$IDENTITY_PICKER_ID")"
+    [ -n "$index" ] || index=1
+    # refresh_identity_picker always puts the decline row last, so any other
+    # index that resolved to no identity is a broken lookup, not this row.
+    [ "$index" = "$rows" ]
 }
 
 # Resolve the profile picker's 1-based index to the profile name.
@@ -551,11 +894,42 @@ package_app() {
     /usr/bin/ditto -c -k --keepParent "$1" "$2"
 }
 
-# Copy the app to the output folder so release signing never happens in place
-# (the development copy keeps its ad-hoc signature). Prints the path the
-# pipeline should operate on: the copy, or the app itself when no distinct
+# Work out what to upload for the target and record it in upload_path.txt.
+# An app bundle has to be zipped; the notary service accepts a flat .pkg
+# directly, and zipping one would only slow the upload down. Returns 0 on
+# success, 1 if the archive could not be created. Arguments: path
+#
+# The path goes to a state file rather than stdout so a failing ditto cannot be
+# mistaken for an empty-but-successful result by a caller using $( ).
+prepare_upload() {
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        printf '%s' "$1" > "$(state_dir)/upload_path.txt"
+        return 0
+    fi
+
+    local upload_zip="$(state_dir)/upload.zip"
+    package_app "$1" "$upload_zip"
+    if [ "$?" != "0" ] || [ ! -f "$upload_zip" ]; then
+        /bin/rm -f "$(state_dir)/upload_path.txt"
+        return 1
+    fi
+    printf '%s' "$upload_zip" > "$(state_dir)/upload_path.txt"
+    return 0
+}
+
+# Print the artifact prepare_upload chose (empty if none).
+upload_path() {
+    local f="$(state_dir)/upload_path.txt"
+    if [ -f "$f" ]; then
+        /bin/cat "$f"
+    fi
+}
+
+# Copy the target to the output folder so release signing never happens in
+# place (the development copy keeps its ad-hoc signature). Prints the path the
+# pipeline should operate on: the copy, or the target itself when no distinct
 # output folder is set. Returns non-zero if the copy fails.
-# Arguments: app_path, output_dir (may be empty)
+# Arguments: target_path, output_dir (may be empty)
 prepare_release_copy() {
     local app="$1"
     local outdir="$2"
@@ -563,24 +937,30 @@ prepare_release_copy() {
     # Canonicalize both folders (trailing slashes, "..", symlinks) before the
     # same-folder test: comparing raw strings could route the rm -rf below at
     # the original app (e.g. an output dir of "/Apps/" for an app in "/Apps").
+    # "cd -P" for the same reason canonical_path uses it - this is a path the
+    # user typed, so it can hold ".." and symlinked components.
     if [ -n "$outdir" ]; then
         /bin/mkdir -p "$outdir" || return 1
-        outdir="$(cd "$outdir" 2>/dev/null && /bin/pwd -P)"
+        outdir="$(cd -P "$outdir" 2>/dev/null && /bin/pwd -P)"
         if [ -z "$outdir" ]; then
             return 1
         fi
     fi
-    # Canonicalize the app itself as well (a symlinked target could otherwise
-    # alias a bundle that really lives in the output folder).
-    local real_app
-    real_app="$(cd "$app" 2>/dev/null && /bin/pwd -P)"
+    # Canonicalize the target as well (a symlinked target could otherwise alias
+    # something that really lives in the output folder). canonical_path handles
+    # a .pkg file as well as a .app directory.
+    local real_app="$(canonical_path "$app")"
     if [ -z "$real_app" ]; then
         return 1
     fi
     local app_dir="$(/usr/bin/dirname "$real_app")"
     if [ -z "$outdir" ] || [ "$outdir" = "$app_dir" ]; then
         /bin/rm -f "$statef"
-        printf '%s' "$app"
+        # The resolved path, not the one that was passed in. Signing a package
+        # replaces it by renaming a temporary over it, and renaming over a
+        # symlink would replace the link itself with a regular file, leaving the
+        # real package untouched and unsigned somewhere else.
+        printf '%s' "$real_app"
         return 0
     fi
     local dest="$outdir/$(/usr/bin/basename "$app")"
@@ -591,6 +971,325 @@ prepare_release_copy() {
     return 0
 }
 
+# Sign an installer package with productsign. Arguments: pkg_path, identity.
+# Returns 0 on success, 1 on failure.
+#
+# productsign cannot write in place, so it signs to a temporary neighbour which
+# then replaces the original. The temporary lives in the same directory as the
+# package on purpose: rename within one filesystem is atomic, so an interrupted
+# run leaves either the old package or the new one, never a half-written file.
+sign_package() {
+    local pkg="$1"
+    local identity="$2"
+    local pkg_dir="$(/usr/bin/dirname "$pkg")"
+    local pkg_name="$(/usr/bin/basename "$pkg")"
+    local temp_pkg="$pkg_dir/.$pkg_name.notarize-signing"
+
+    append_log "Signing $pkg_name with $identity..."
+    /bin/rm -f "$temp_pkg"
+
+    # Declared before the assignment, not with it: "local out=$(...)" would make
+    # the next line read local's own exit status instead of productsign's.
+    local out
+    out="$(/usr/bin/productsign --sign "$identity" "$pkg" "$temp_pkg" 2>&1)"
+    local rc=$?
+    if [ -n "$out" ]; then
+        append_log "$out"
+    fi
+    if [ "$rc" != "0" ] || [ ! -f "$temp_pkg" ]; then
+        /bin/rm -f "$temp_pkg"
+        append_log "ERROR: productsign failed (rc=$rc)."
+        return 1
+    fi
+
+    /bin/mv -f "$temp_pkg" "$pkg"
+    if [ "$?" != "0" ]; then
+        /bin/rm -f "$temp_pkg"
+        append_log "ERROR: could not replace $pkg_name with the signed package."
+        return 1
+    fi
+
+    append_log "Signed installer package."
+    return 0
+}
+
+# Write the entitlements embedded in an app's current signature to dest.
+# Returns 0 and leaves the file in place when the app carries entitlements;
+# returns 1 and removes it when the app carries none or is not signed.
+# Arguments: app_path, dest_path
+extract_entitlements() {
+    local app="$1"
+    local dest="$2"
+    # Declared apart from its assignment so the "$?" test below reads
+    # entitlement_count's status rather than local's.
+    local count
+
+    /bin/rm -f "$dest"
+    /usr/bin/codesign -d --entitlements - --xml "$app" > "$dest" 2>/dev/null
+    if [ "$?" != "0" ] || [ ! -s "$dest" ]; then
+        /bin/rm -f "$dest"
+        return 1
+    fi
+    # An app with no entitlements still yields a well-formed but empty plist,
+    # so emptiness has to be judged by the contents, not the file size.
+    count="$(entitlement_count "$dest")"
+    if [ "$?" != "0" ] || [ "$count" = "0" ]; then
+        /bin/rm -f "$dest"
+        return 1
+    fi
+    return 0
+}
+
+# Print the number of <key> elements in an entitlements plist, counting keys
+# inside nested dictionaries too, and return 0. Return 1 without printing when
+# the file is not a readable plist.
+#
+# "Unreadable" has to stay distinguishable from "empty". Collapsing the two
+# would let a malformed or unreadable file read as "no entitlements wanted",
+# which matches an app that has none - so a typo in the entitlements field would
+# silently skip signing instead of failing.
+# Arguments: entitlements_file
+entitlement_count() {
+    local norm="$(state_dir)/count-norm.plist"
+    # plutil turns a whitespace-only file into an empty dictionary, which would
+    # sail through the root check below and read as "no entitlements wanted".
+    # codesign rejects such a file anyway, but with an opaque error partway
+    # through signing rather than the clear one this function exists to give.
+    if ! /usr/bin/grep -q '[^[:space:]]' "$1" 2>/dev/null; then
+        return 1
+    fi
+    # codesign parses entitlements with its own XML reader, not plutil's, and
+    # rejects the old-style ASCII syntax that plutil accepts - "{a = b;}" is a
+    # valid one-key dictionary to plutil and "syntax error near line 1" to
+    # codesign. Accepting it here would mean the check meant to produce a clear
+    # message passes the file straight to an opaque failure.
+    case "$(/usr/bin/head -c 16 "$1" 2>/dev/null)" in
+        bplist*) ;;
+        *'<'*) ;;
+        *) return 1 ;;
+    esac
+    if ! /usr/bin/plutil -convert xml1 -o "$norm" "$1" 2>/dev/null; then
+        return 1
+    fi
+    # Parsing is not enough: plutil accepts any property-list root, and an
+    # old-style ASCII plist makes a bare word like "garbage" a perfectly valid
+    # string. That would convert cleanly, count zero keys, and so compare equal
+    # to an app carrying no entitlements. Entitlements are always a dictionary,
+    # and only the root one starts at column 0 - nested dicts are indented. The
+    # bracket set covers <dict>, <dict/> and <dict attr=...> alike.
+    if ! /usr/bin/grep -q '^<dict[ />]' "$norm"; then
+        return 1
+    fi
+    /usr/bin/grep -c '<key>' "$norm"
+    return 0
+}
+
+# Answer whether an app's embedded entitlements are the ones in a given file.
+# Comparison is over canonical XML. plutil sorts dictionary keys on conversion,
+# so two plists that differ only in key order compare equal; anything plutil
+# cannot read compares as different, which re-signs rather than skipping.
+# Arguments: app_path, entitlements_file
+# Returns 0 when they match, 1 when they differ or the file is unreadable.
+entitlements_match() {
+    local app="$1"
+    local wanted="$2"
+    local current="$(state_dir)/cmp-current.entitlements"
+    local current_norm="$(state_dir)/cmp-current-norm.plist"
+    local wanted_norm="$(state_dir)/cmp-wanted-norm.plist"
+
+    if ! extract_entitlements "$app" "$current"; then
+        # The app carries none, so only a readable and empty file can match.
+        # Declared apart from its assignment: with "local wanted_count=$(...)"
+        # the "||" would guard local's status, which is always 0, and an
+        # unreadable file would be counted as a match.
+        local wanted_count
+        wanted_count="$(entitlement_count "$wanted")" || return 1
+        [ "$wanted_count" = "0" ]
+        return $?
+    fi
+    /usr/bin/plutil -convert xml1 -o "$current_norm" "$current" 2>/dev/null || return 1
+    /usr/bin/plutil -convert xml1 -o "$wanted_norm" "$wanted" 2>/dev/null || return 1
+    /usr/bin/cmp -s "$current_norm" "$wanted_norm"
+}
+
+# Answer whether one signed item carries the signature the notary service wants:
+# the right certificate, a secure timestamp, and - only where it applies - the
+# hardened runtime. An unsigned or ad-hoc item has no Authority line and so
+# fails the first test.
+#
+# The runtime is asked for by the caller rather than always, because the flag
+# does not mean anything on most nested code. It is a property of the process a
+# main executable starts, so a framework or a loadable library that is only ever
+# mapped into someone else's process does not carry it - and Apple notarizes
+# apps that way every day. On this machine 15 of the 61 apps in /Applications
+# that ship frameworks have at least one without the flag, Xcode, Brave and the
+# whole Office suite among them, all of them Gatekeeper-accepted and stapled.
+# Demanding it from every nested item would call those apps unacceptable.
+# Arguments: path, identity (empty means any Developer ID Application),
+# require_runtime ("yes" to insist on the hardened runtime flag)
+# Returns 0 when it matches, 1 when it does not.
+signed_item_matches() {
+    local info="$(/usr/bin/codesign -dvv "$1" 2>&1)"
+    local authority="$(printf '%s\n' "$info" | /usr/bin/sed -n 's/^Authority=//p' | /usr/bin/head -1)"
+    if [ -n "$2" ]; then
+        [ "$authority" = "$2" ] || return 1
+    else
+        case "$authority" in
+            "Developer ID Application: "*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    if [ "$3" = "yes" ]; then
+        case "$(printf '%s\n' "$info" | /usr/bin/sed -n 's/.*flags=\([^ ]*\).*/\1/p' | /usr/bin/head -1)" in
+            *runtime*) ;;
+            *) return 1 ;;
+        esac
+    fi
+    printf '%s\n' "$info" | /usr/bin/grep -q '^Timestamp='
+}
+
+# Print the reason the target still needs signing, or nothing at all when its
+# existing signature already matches every setting the window would apply.
+#
+# Only the full pipeline consults this. An explicit Sign Only click always
+# signs: the developer asked for that specific action, and silently doing
+# nothing in response to a button press is its own kind of bug.
+#
+# An empty identity asks a slightly different question - "is this acceptable to
+# the notary service at all", rather than "does this match what was selected" -
+# which is what the pipeline needs when the keychain holds no usable certificate.
+# Arguments: path, identity (empty means any Developer ID), entitlements_file
+# (may be empty; apps only)
+# Returns 0 when signing is needed (a reason was printed), 1 when it can be
+# skipped.
+resign_reason() {
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        resign_reason_pkg "$1" "$2"
+    else
+        resign_reason_app "$1" "$2" "$3"
+    fi
+}
+
+# Arguments: app_path, identity, entitlements_file (may be empty)
+resign_reason_app() {
+    local app="$1"
+    local identity="$2"
+    local entitlements="$3"
+    # Set by "read" once the listing loop is reached.
+    local item
+
+    if ! /usr/bin/codesign --verify --deep --strict "$app" >/dev/null 2>&1; then
+        printf 'the existing signature is missing or does not verify'
+        return 0
+    fi
+    # The notary service rejects anything without a Developer ID certificate,
+    # the hardened runtime, or a secure timestamp, so a signature lacking any of
+    # them has to be replaced no matter who made it.
+    if ! signed_item_matches "$app" "$identity" yes; then
+        local authority="$(/usr/bin/codesign -dvv "$app" 2>&1 | /usr/bin/sed -n 's/^Authority=//p' | /usr/bin/head -1)"
+        if [ -z "$authority" ]; then
+            printf 'the outer bundle carries no Developer ID signature'
+        elif [ -n "$identity" ] && [ "$authority" != "$identity" ]; then
+            printf 'it is signed by "%s" rather than the selected "%s"' "$authority" "$identity"
+        elif [ -z "$identity" ]; then
+            printf 'it is signed by "%s", which is not a Developer ID Application certificate, or lacks the hardened runtime or a secure timestamp' "$authority"
+        else
+            printf 'it is not signed with the hardened runtime, or carries no secure timestamp'
+        fi
+        return 0
+    fi
+    # A valid outer signature says nothing about what is nested inside it.
+    # --verify --deep --strict only confirms each seal is self-consistent, and
+    # codesign -dvv on the bundle reports the outer signature alone - so an
+    # ad-hoc helper, or an unsigned .dylib dropped in Resources, passes both
+    # while the notary service rejects the upload. Nested code is precisely what
+    # codesign_applet.sh exists to fix, so this has to cover the same set:
+    # --list-code enumerates it from the signer's own discovery rather than a
+    # second copy of the rules that could drift out of step with it.
+    local listing="$(state_dir)/code-listing.txt"
+    /bin/rm -f "$listing"
+    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --list-code "$app" > "$listing" 2>/dev/null
+    # An empty listing has to count as a failure, not as "nothing to check".
+    # Every app bundle contains at least its own main executable, so an empty
+    # result means the enumeration did not work - and treating that as all-clear
+    # is exactly the fail-open this check exists to close.
+    if [ "$?" != "0" ] || [ ! -s "$listing" ]; then
+        printf 'the bundle contents could not be enumerated'
+        return 0
+    fi
+    while IFS= read -r item; do
+        [ -n "$item" ] || continue
+        [ "$item" = "$app" ] && continue
+        # No runtime requirement here: see signed_item_matches. The outer bundle
+        # is the main executable and is checked for it above.
+        if ! signed_item_matches "$item" "$identity" no; then
+            # Strip the bundle prefix with parameter expansion, not sed: a path
+            # containing the delimiter or a regex metacharacter would otherwise
+            # either error out or fail to strip.
+            printf 'nested code is not signed to match: %s' "${item#"$app"/}"
+            return 0
+        fi
+    done < "$listing"
+    # An empty field means the entitlements already in the bundle are carried
+    # over verbatim, so by definition nothing would change.
+    if [ -n "$entitlements" ]; then
+        if [ ! -f "$entitlements" ]; then
+            printf 'the entitlements file "%s" is missing' "$entitlements"
+            return 0
+        fi
+        if ! entitlement_count "$entitlements" >/dev/null; then
+            printf 'the entitlements file "%s" is not a readable plist' "$entitlements"
+            return 0
+        fi
+        if ! entitlements_match "$app" "$entitlements"; then
+            printf 'its entitlements differ from those in "%s"' "$entitlements"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Arguments: pkg_path, identity
+resign_reason_pkg() {
+    local pkg="$1"
+    local identity="$2"
+    local info="$(/usr/sbin/pkgutil --check-signature "$pkg" 2>&1)"
+
+    case "$info" in
+        *'Status: signed by a developer certificate issued by Apple for distribution'*) ;;
+        *)
+            printf 'it is not signed for distribution with a Developer ID Installer certificate'
+            return 0
+            ;;
+    esac
+    if ! printf '%s\n' "$info" | /usr/bin/grep -q 'Signed with a trusted timestamp on:'; then
+        printf 'its signature carries no trusted timestamp'
+        return 0
+    fi
+    # With no identity to compare against, the distribution status above is the
+    # whole question: the package is acceptable to the notary service whoever
+    # signed it.
+    if [ -n "$identity" ]; then
+        local leaf="$(printf '%s\n' "$info" | /usr/bin/sed -n 's/^ *1\. *//p' | /usr/bin/head -1)"
+        if [ "$leaf" != "$identity" ]; then
+            printf 'it is signed by "%s" rather than the selected "%s"' "$leaf" "$identity"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Sign the target for release, dispatching on its kind. Arguments: path,
+# identity, entitlements_file (ignored for a package).
+# Returns 0 on success, 1 on failure.
+sign_target() {
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        sign_package "$1" "$2"
+    else
+        sign_app "$1" "$2" "$3"
+    fi
+}
+
 # Sign the target app for release by delegating to the bundled
 # codesign_applet.sh (copied from OMC Distribution/Scripts): it signs nested
 # executables in Contents/Helpers|Library|Support, each framework's Support
@@ -598,6 +1297,13 @@ prepare_release_copy() {
 # with --brief, so its output is a compact summary by design (no per-file
 # signing chatter, banners, or dividers); that output is captured to
 # state_dir/sign.log and mirrored verbatim into the UI log.
+#
+# The entitlements field in the window decides what gets applied, and the signer
+# is called with --no-entitlements-search so nothing the developer cannot see on
+# screen can creep in. When the field is empty the entitlements already in the
+# bundle are carried over: signing is a replacement, not an amendment, so a
+# sandboxed app re-signed with none would come out unsandboxed carrying a
+# perfectly valid signature that the notary service would happily accept.
 # Arguments: app_path, identity, entitlements_file (may be empty).
 # Returns 0 on success, 1 on failure.
 sign_app() {
@@ -605,12 +1311,34 @@ sign_app() {
     local identity="$2"
     local entitlements="$3"
 
+    if [ -n "$entitlements" ]; then
+        if [ ! -f "$entitlements" ]; then
+            append_log "ERROR: entitlements file not found: $entitlements"
+            return 1
+        fi
+        if ! entitlement_count "$entitlements" >/dev/null; then
+            append_log "ERROR: the entitlements file is not a readable plist: $entitlements"
+            return 1
+        fi
+        append_log "Entitlements: $entitlements ($(entitlement_count "$entitlements") keys)."
+    else
+        local inherited="$(state_dir)/inherited.entitlements"
+        if extract_entitlements "$app" "$inherited"; then
+            entitlements="$inherited"
+            append_log "Entitlements: none set in the window - carrying over the entitlements already in the signature ($(entitlement_count "$inherited") keys), which re-signing would otherwise drop."
+        else
+            append_log "Entitlements: none set in the window, and the existing signature carries none."
+        fi
+    fi
+
     local signlog="$(state_dir)/sign.log"
     append_log "Signing $(/usr/bin/basename "$app") (log: sign.log)..."
-    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --brief "$app" "$identity" "$entitlements" > "$signlog" 2>&1
+    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --brief --no-entitlements-search "$app" "$identity" "$entitlements" > "$signlog" 2>&1
     local rc=$?
 
     # Brief output is already curated; mirror every line into the UI log.
+    # Set by "read", so declared rather than initialized.
+    local line
     while IFS= read -r line; do
         append_log "$line"
     done < "$signlog"
@@ -639,12 +1367,62 @@ run_codesign_verify() {
     return 1
 }
 
+# Succeed (0) if an installer package is signed with a Developer ID Installer
+# certificate. Used to let a pre-signed package through when signing is turned
+# off. Arguments: pkg_path
+#
+# The full phrase matters. pkgutil reports plenty of other statuses that also
+# begin "signed by" - "signed by untrusted certificate", "signed by a
+# certificate that has since expired", "signed by a developer certificate
+# issued by Apple (Development)" - and matching the prefix would wave through
+# exactly the packages this check exists to stop, only for the notary service
+# to reject them after the upload.
+package_is_signed() {
+    /usr/sbin/pkgutil --check-signature "$1" 2>/dev/null \
+        | /usr/bin/grep -q "Status: signed by a developer certificate issued by Apple for distribution"
+}
+
+# Report an installer package's signature; append the result to the log.
+# Arguments: pkg_path
+#
+# The verdict comes from the reported status rather than pkgutil's exit code:
+# an unsigned package is a successful query with a "no signature" answer, not a
+# tool failure, and only the former should be treated as a signature problem.
+run_pkg_signature_check() {
+    append_log "Checking installer package signature..."
+    local out="$(/usr/sbin/pkgutil --check-signature "$1" 2>&1)"
+    append_log "$out"
+    if package_is_signed "$1"; then
+        return 0
+    fi
+    append_log "The package is not signed with a Developer ID Installer certificate."
+    return 1
+}
+
+# Verify the target's signature, dispatching on its kind. Arguments: path
+run_signature_verify() {
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        run_pkg_signature_check "$1"
+    else
+        run_codesign_verify "$1"
+    fi
+}
+
 # Gatekeeper assessment; append the result to the log and return spctl's
-# exit code. Arguments: app_path
+# exit code. An installer package is assessed against the install policy, an
+# app against the execute policy - passing the wrong one reports a failure that
+# says nothing about the artifact. Arguments: path
 run_spctl() {
-    append_log "Gatekeeper assessment:"
-    local out
-    out="$(/usr/sbin/spctl --assess --type execute --verbose=4 "$1" 2>&1)"
+    # Set in one branch or the other; "out" is declared apart from its
+    # assignment so the next line reads spctl's exit status, not local's.
+    local assessment_type out
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        assessment_type="install"
+    else
+        assessment_type="execute"
+    fi
+    append_log "Gatekeeper assessment (--type $assessment_type):"
+    out="$(/usr/sbin/spctl --assess --type "$assessment_type" --verbose=4 "$1" 2>&1)"
     local rc=$?
     append_log "$out"
     return $rc

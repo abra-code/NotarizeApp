@@ -8,7 +8,7 @@ populate_pickers
 # Seed the target from the opened/dropped object, if any.
 first="$(printf '%s' "$OMC_OBJ_PATH" | /usr/bin/head -n 1)"
 if [ -n "$first" ]; then
-    is_app_bundle "$first"
+    is_supported_target "$first"
     if [ "$?" = "0" ]; then
         set_target "$first"
     fi

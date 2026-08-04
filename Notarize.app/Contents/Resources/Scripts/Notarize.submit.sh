@@ -5,7 +5,7 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
 target="$(work_target)"
 if [ -z "$target" ]; then
-    "$alert_tool" --level caution --title "Notarize" "Choose an app first."
+    "$alert_tool" --level caution --title "Notarize" "Choose an app or installer package first."
     exit 0
 fi
 profile="$(selected_profile)"
@@ -34,9 +34,8 @@ enable_view "$CANCEL_BTN_ID" 1
 show_progress 1
 clear_log
 rail_set "$RAIL_SUBMIT_ID" running
-set_status "Packaging for upload..."
-upload_zip="$(state_dir)/upload.zip"
-package_app "$target" "$upload_zip"
+set_status "Preparing the upload..."
+prepare_upload "$target"
 if [ "$?" != "0" ]; then
     rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Packaging failed."
@@ -45,7 +44,7 @@ if [ "$?" != "0" ]; then
 fi
 
 set_status "Submitting to the notary service..."
-submit_and_wait "$upload_zip" "$profile"
+submit_and_wait "$(upload_path)" "$profile"
 if [ "$?" != "0" ]; then
     rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Submission failed."

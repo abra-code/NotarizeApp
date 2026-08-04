@@ -4,12 +4,19 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
 target="$(get_target)"
 if [ -z "$target" ]; then
-    "$alert_tool" --level caution --title "Notarize" "Choose an app first."
+    "$alert_tool" --level caution --title "Notarize" "Choose an app or installer package first."
     exit 0
 fi
 identity="$(selected_identity)"
 if [ -z "$identity" ]; then
-    "$alert_tool" --level caution --title "Notarize" "No Developer ID Application identity is available."
+    # Sign Only never skips a signature that is already correct - but with no
+    # identity selected there is nothing to sign with at all. Say which of the
+    # two reasons applies instead of appearing to ignore the button.
+    if [ -n "$(list_signing_identities "$(current_kind)")" ]; then
+        "$alert_tool" --level caution --title "Notarize" "\"$NO_SIGN_OPTION\" is selected. Pick a signing identity to sign this target."
+    else
+        "$alert_tool" --level caution --title "Notarize" "No $(required_certificate_class) certificate is available in your keychain."
+    fi
     exit 0
 fi
 entitlements="$(view_value "$ENTITLEMENTS_FIELD_ID")"
@@ -28,10 +35,14 @@ if [ "$?" != "0" ] || [ -z "$work" ]; then
     show_progress 0
     exit 0
 fi
-if [ "$work" != "$target" ]; then
+if made_release_copy; then
     append_log "Copied to output folder: $work"
 fi
-sign_app "$work" "$identity" "$entitlements"
+# Deliberately unconditional: the full pipeline consults resign_reason and can
+# skip a signature that already matches, but this handler exists because the
+# developer clicked Sign Only. Answering an explicit button press by doing
+# nothing would be worse than a redundant signature.
+sign_target "$work" "$identity" "$entitlements"
 if [ "$?" != "0" ]; then
     rail_set "$RAIL_SIGN_ID" failed
     set_status "Signing failed."

@@ -5,7 +5,7 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
 target="$(work_target)"
 if [ -z "$target" ]; then
-    "$alert_tool" --level caution --title "Notarize" "Choose an app first."
+    "$alert_tool" --level caution --title "Notarize" "Choose an app or installer package first."
     exit 0
 fi
 

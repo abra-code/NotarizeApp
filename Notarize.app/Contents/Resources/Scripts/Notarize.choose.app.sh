@@ -6,9 +6,9 @@ first="$OMC_DLG_CHOOSE_OBJECT_PATH"
 if [ -z "$first" ]; then
     exit 0
 fi
-is_app_bundle "$first"
+is_supported_target "$first"
 if [ "$?" != "0" ]; then
-    "$alert_tool" --level caution --title "Notarize" "Please choose a .app bundle."
+    "$alert_tool" --level caution --title "Notarize" "$(unsupported_target_reason "$first")"
     exit 0
 fi
 set_target "$first"

@@ -16,6 +16,12 @@ if [ -f "$pidfile" ]; then
 fi
 
 # Best effort: stop a notarytool upload still running for this window's archive.
+# Only ever match the zip inside this window's state directory. The pattern is a
+# regular expression and the path is matched against every command line on the
+# system, so a user-chosen path - a .pkg is uploaded straight from wherever it
+# lives - could match more than intended. notarytool is a child of the pipeline
+# anyway, so the process-group kill above already covers it; this is the backstop
+# for the one path we know is ours.
 /usr/bin/pkill -f "$(state_dir)/upload.zip" 2>/dev/null
 
 show_progress 0
