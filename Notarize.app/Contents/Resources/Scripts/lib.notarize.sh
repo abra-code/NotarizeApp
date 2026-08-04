@@ -761,7 +761,7 @@ refresh_identity_picker() {
         # cannot disagree about where the last row is.
         index="$(/usr/bin/grep -c '' "$identities_file")"
     elif [ -n "$sel" ]; then
-        index="$(printf '%s\n' "$ids" | /usr/bin/grep -n -x -F "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
+        index="$(printf '%s\n' "$ids" | /usr/bin/grep -n -x -F -e "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
     fi
     # A remembered per-target certificate that is no longer installed falls back
     # to the default for this kind, not to whatever happens to be first. Landing
@@ -770,7 +770,7 @@ refresh_identity_picker() {
     if [ -z "$index" ]; then
         local default_identity="$(prefs_get "$(default_identity_key "$kind")")"
         if [ -n "$default_identity" ] && [ "$default_identity" != "$sel" ]; then
-            index="$(printf '%s\n' "$ids" | /usr/bin/grep -n -x -F "$default_identity" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
+            index="$(printf '%s\n' "$ids" | /usr/bin/grep -n -x -F -e "$default_identity" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
         fi
     fi
     if [ -z "$index" ]; then
@@ -807,9 +807,11 @@ refresh_profile_picker() {
     # is bound to the 1-based position in its option list, so replacing the list
     # and leaving the index alone points it at whatever now occupies that slot -
     # a different profile than the one named, chosen silently.
+    # -e, because a profile name is whatever the developer typed and one starting
+    # with a dash would otherwise be taken for grep's own options.
     local idx=""
     if [ -n "$sel" ]; then
-        idx="$(printf '%s\n' "$profs" | /usr/bin/grep -n -x -F "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
+        idx="$(printf '%s\n' "$profs" | /usr/bin/grep -n -x -F -e "$sel" | /usr/bin/head -n 1 | /usr/bin/cut -d : -f 1)"
     fi
     if [ -z "$idx" ]; then
         idx=1
