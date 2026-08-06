@@ -150,6 +150,23 @@ else
 	fi
 fi
 
+# 1b. Preflight the nested code. An ad-hoc signed or unsigned nested item lets
+# the bundle seal, passes the notary service, staples cleanly - and is then
+# refused by Gatekeeper, because it matches no policy rule. Catching it here
+# costs a directory walk; catching it at step 5 costs an upload, a wait on the
+# notary service, and a release that would have been rejected on every Mac it
+# reached. Runs whether or not the signing step was skipped: the skip means the
+# signature already matches the window, not that it is fit to ship.
+set_status "Checking nested code..."
+preflight_nested_code "$work"
+if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SIGN_ID" failed
+    set_status "Nested code is not properly signed."
+    "$alert_tool" --level stop --title "Notarize" "Some nested code is ad-hoc signed or unsigned. Gatekeeper would reject this app even after notarization succeeds. See the log."
+    finish
+    exit 0
+fi
+
 # 2. Prepare the upload. An app has to be zipped; the notary service takes a
 # flat package as it is.
 rail_set "$RAIL_SUBMIT_ID" running

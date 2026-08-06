@@ -1509,6 +1509,122 @@ run_signature_verify() {
     fi
 }
 
+# The one line list_uncertified_nested_items emits that is not an item: the
+# enumeration itself failed, so nothing can be concluded about the bundle.
+# Callers match on it to say so rather than blaming the contents.
+nested_enum_failed="  (the bundle contents could not be enumerated)"
+
+# Print every nested code item that carries no certificate chain, one indented
+# line each. Prints nothing when they are all properly signed.
+#
+# Enumeration comes from the signer's own --list-code, exactly as resign_reason
+# does, so this cannot check a narrower set than codesign_applet.sh would fix.
+# Arguments: app_path
+list_uncertified_nested_items() {
+    local app="$1"
+    local listing="$(state_dir)/preflight-listing.txt"
+    /bin/rm -f "$listing"
+    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --list-code "$app" > "$listing" 2>/dev/null
+    local rc=$?
+    # Every app bundle holds at least its own main executable, so an empty
+    # listing means the enumeration failed. Reporting that beats reporting
+    # all-clear, which is the fail-open this check exists to close. The exit
+    # status matters too: a bundle path the signer rejects outright produces a
+    # short listing that would otherwise be walked as if it held item paths.
+    if [ "$rc" != "0" ] || [ ! -s "$listing" ]; then
+        printf '%s\n' "$nested_enum_failed"
+        return 0
+    fi
+    local item info authority
+    while IFS= read -r item; do
+        [ -n "$item" ] || continue
+        info="$(/usr/bin/codesign -dvv "$item" 2>&1)"
+        case "$info" in
+            *"code object is not signed at all"*)
+                printf '  %s - not signed\n' "${item#"$app"/}"
+                continue
+                ;;
+        esac
+        authority="$(printf '%s\n' "$info" | /usr/bin/sed -n 's/^Authority=//p' | /usr/bin/head -1)"
+        if [ -n "$authority" ]; then
+            continue
+        fi
+        if printf '%s\n' "$info" | /usr/bin/grep -q '^Signature=adhoc'; then
+            printf '  %s - ad-hoc signature, no certificate\n' "${item#"$app"/}"
+        else
+            printf '  %s - no signing authority\n' "${item#"$app"/}"
+        fi
+    done < "$listing"
+}
+
+# Preflight the one defect that survives every other check in this pipeline:
+# nested code carrying an ad-hoc signature, or none at all.
+#
+# codesign --verify --deep --strict accepts an ad-hoc nested signature - the
+# seal is self-consistent - and so does the notary service, which enforces
+# Developer ID, the hardened runtime and a secure timestamp on Mach-O code only.
+# An app can therefore sign, notarize and staple cleanly and still be refused by
+# Gatekeeper, which evaluates EVERY nested item against its policy rules and
+# finds an ad-hoc signature has no certificate chain to match one with.
+#
+# Catching it here rather than after stapling saves an upload and a round trip
+# through the notary service. Arguments: path
+# Returns 0 when every nested item is properly signed, 1 otherwise.
+preflight_nested_code() {
+    # A flat package has no nested code to walk; pkgutil already covers it.
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        return 0
+    fi
+    local offenders="$(list_uncertified_nested_items "$1")"
+    if [ -z "$offenders" ]; then
+        append_log "Preflight: all nested code carries a certificate chain."
+        return 0
+    fi
+    if [ "$offenders" = "$nested_enum_failed" ]; then
+        append_log "Preflight FAILED: the bundle's contents could not be enumerated, so its nested code cannot be cleared for Gatekeeper. Check that the path is a readable app bundle."
+        return 1
+    fi
+    append_log "Preflight FAILED: nested code without a usable certificate chain:"
+    append_log "$offenders"
+    append_log "Gatekeeper rejects the whole app when any nested item is ad-hoc signed or unsigned, even after notarization and stapling succeed."
+    append_log "Sign the app with this window's Sign step (or Actions > Sign Only), which signs every nested item including non-code files in Contents/Helpers."
+    return 1
+}
+
+# Explain a Gatekeeper rejection. spctl reports a bare "rejected" with no reason
+# when a nested item matches no policy rule, so the log needs the reason spelled
+# out. Arguments: path, spctl_output
+explain_spctl_rejection() {
+    case "$2" in
+        *"Unnotarized Developer ID"*)
+            append_log "Reason: the signature is a valid Developer ID but this exact build has no notarization ticket. Re-signing after notarizing invalidates the ticket - notarize and staple this copy."
+            return 0
+            ;;
+        *"no usable signature"*)
+            append_log "Reason: the bundle's signature is missing or unreadable. Note that stripping extended attributes (xattr -c) destroys the signatures of non-code files in Contents/Helpers and similar nested-code directories."
+            return 0
+            ;;
+    esac
+    # A flat package has no nested code to walk, but it still deserves a reason
+    # line rather than a bare "rejected" - fall through to the fallback below.
+    local offenders=""
+    if [ "$(target_kind_of "$1")" != "pkg" ]; then
+        offenders="$(list_uncertified_nested_items "$1")"
+        # An enumeration failure is not a list of offending items; presenting it
+        # as one would blame the contents for a walk that never happened.
+        if [ "$offenders" = "$nested_enum_failed" ]; then
+            offenders=""
+        fi
+    fi
+    if [ -n "$offenders" ]; then
+        append_log "Reason: these nested items carry no certificate chain, so Gatekeeper can match no policy rule for them:"
+        append_log "$offenders"
+        append_log "Console shows one \"rejecting due to lack of matching active rule\" from syspolicyd per item. Re-sign the app to fix them."
+    else
+        append_log "Reason: not determined here. Check Console for syspolicyd messages from com.apple.securityd:gk during the assessment."
+    fi
+}
+
 # Gatekeeper assessment; append the result to the log and return spctl's
 # exit code. An installer package is assessed against the install policy, an
 # app against the execute policy - passing the wrong one reports a failure that
@@ -1526,6 +1642,9 @@ run_spctl() {
     out="$(/usr/sbin/spctl --assess --type "$assessment_type" --verbose=4 "$1" 2>&1)"
     local rc=$?
     append_log "$out"
+    if [ "$rc" != "0" ]; then
+        explain_spctl_rejection "$1" "$out"
+    fi
     return $rc
 }
 

@@ -22,6 +22,9 @@ else
     out="$(/usr/bin/codesign -dv --verbose=4 "$target" 2>&1)"
     append_log "$out"
     run_codesign_verify "$target"
+    # The nested-code state is the clue a bare "rejected" from spctl withholds,
+    # so state it outright rather than leaving it to be inferred.
+    preflight_nested_code "$target"
 fi
 run_spctl "$target"
 append_log "Staple status:"
