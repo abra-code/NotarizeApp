@@ -1,0 +1,29 @@
+#!/bin/sh
+# helpers/spctl - a fake /usr/sbin/spctl, covering "--assess".
+#
+# Gatekeeper's assessment cannot be simulated and must not be asked for real:
+# the real tool consults syspolicyd, can reach the network, and answers about
+# the machine's policy database rather than about anything a test set up.
+#
+# Both the exit code and the text matter here. run_spctl returns the code, and
+# explain_spctl_rejection reads the TEXT to choose which explanation to append,
+# so a test for the "Unnotarized Developer ID" branch has to be able to script
+# a rejection whose wording contains that phrase.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+path=""
+for arg in "$@"; do
+    path="$arg"
+done
+
+record="$fake_dir/spctl/$(fake_key "$path")"
+if [ -f "$record.out" ]; then
+    /bin/cat "$record.out" >&2
+    exit "$(fake_rc "$record.rc" 0)"
+fi
+
+# The real tool writes its assessment to stderr, which is why the applet
+# captures it with 2>&1.
+printf '%s: accepted\nsource=Notarized Developer ID\n' "$path" >&2
+exit 0

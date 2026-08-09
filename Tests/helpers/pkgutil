@@ -1,0 +1,24 @@
+#!/bin/sh
+# helpers/pkgutil - a fake /usr/sbin/pkgutil, covering "--check-signature".
+#
+# The applet reads pkgutil's REPORTED STATUS rather than its exit code, on
+# purpose: an unsigned package is a successful query with a "no signature"
+# answer, not a tool failure. So the useful thing to script here is the output
+# text, and the default exit code stays 0 even for an unsigned package - a fake
+# that failed instead would make package_is_signed pass for the wrong reason.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+[ "$1" = "--check-signature" ] || {
+    printf 'fake pkgutil: only --check-signature is modeled, got: %s\n' "$1" >&2
+    exit 70
+}
+
+record="$fake_dir/pkgsig/$(fake_key "$2")"
+if [ -f "$record.out" ]; then
+    /bin/cat "$record.out"
+    exit "$(fake_rc "$record.rc" 0)"
+fi
+
+printf 'Package "%s":\n   Status: no signature\n' "$(/usr/bin/basename "$2")"
+exit 0

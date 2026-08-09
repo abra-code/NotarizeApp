@@ -1,0 +1,88 @@
+#!/bin/sh
+# helpers/xcrun - a fake /usr/bin/xcrun covering the two tools the applet runs
+# through it: notarytool and stapler.
+#
+# Neither can be run for real in a test. notarytool needs credentials in the
+# keychain and talks to Apple; stapler talks to Apple and rewrites the bundle it
+# is pointed at. Both take minutes.
+#
+# Answers are filed per subcommand, and notarytool history additionally per
+# profile name, because notary_profile_exists asks it one question per name and
+# the whole point of that function is that different names answer differently.
+#
+# Records are written by the notary_* helpers in lib.test.notarize.sh.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+tool="$1"
+sub="$2"
+shift 2
+
+case "$tool/$sub" in
+    notarytool/history)
+        # The profile the applet asked about. notary_profile_exists answers a
+        # question about ONE name, so a fake that answered the same for every
+        # name would make its two branches indistinguishable.
+        profile=""
+        want_profile=0
+        for arg in "$@"; do
+            if [ "$want_profile" = "1" ]; then
+                profile="$arg"
+                want_profile=0
+            fi
+            [ "$arg" = "--keychain-profile" ] && want_profile=1
+        done
+        slot="$fake_dir/notarytool.history.$(fake_text_key "$profile")"
+        if [ -f "$slot.rc" ] || [ -f "$slot.out" ]; then
+            fake_emit "$slot.out"
+            exit "$(fake_rc "$slot.rc" 0)"
+        fi
+        fake_emit "$fake_dir/notarytool.history.out"
+        exit "$(fake_rc "$fake_dir/notarytool.history.rc" 0)"
+        ;;
+    notarytool/submit)
+        # The applet redirects stdout into a file and reads /id and /status out
+        # of it with plister, so the scripted stdout here is that JSON.
+        fake_emit "$fake_dir/notarytool.submit.out"
+        exit "$(fake_rc "$fake_dir/notarytool.submit.rc" 0)"
+        ;;
+    notarytool/log)
+        # "notarytool log <id> --keychain-profile <p> <destination>" writes the
+        # log to the destination path rather than to stdout, and the applet then
+        # reads that file. Writing to stdout here would leave print_issues with
+        # nothing to read and every issue assertion would pass vacuously.
+        dest=""
+        for arg in "$@"; do
+            dest="$arg"
+        done
+        rc="$(fake_rc "$fake_dir/notarytool.log.rc" 0)"
+        if [ "$rc" = "0" ] && [ -n "$dest" ]; then
+            fake_emit "$fake_dir/notarytool.log.out" > "$dest"
+        fi
+        exit "$rc"
+        ;;
+    notarytool/store-credentials)
+        # STDIN is captured, not discarded. The Apple ID flow feeds the
+        # app-specific password over stdin precisely so it never appears in
+        # argv, and a fake that only recorded argv can assert that it is ABSENT
+        # from the command line while proving nothing about whether it was
+        # delivered at all - so a refactor that silently stopped sending it
+        # would still report "Saved and validated profile".
+        /bin/cat > "$fake_dir/notarytool.store.stdin" 2>/dev/null
+        fake_emit "$fake_dir/notarytool.store.out"
+        exit "$(fake_rc "$fake_dir/notarytool.store.rc" 0)"
+        ;;
+    stapler/staple)
+        fake_emit "$fake_dir/stapler.staple.out"
+        exit "$(fake_rc "$fake_dir/stapler.staple.rc" 0)"
+        ;;
+    stapler/validate)
+        fake_emit "$fake_dir/stapler.validate.out"
+        exit "$(fake_rc "$fake_dir/stapler.validate.rc" 0)"
+        ;;
+esac
+
+# An unscripted combination is a test that is exercising a path this fake does
+# not model. Failing loudly beats returning 0, which would look like success.
+printf 'fake xcrun: unscripted invocation: %s %s\n' "$tool" "$sub" >&2
+exit 70

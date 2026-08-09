@@ -1,0 +1,70 @@
+#!/bin/sh
+# helpers/codesign - a fake /usr/bin/codesign backed by a directory of
+# signature records, one per path.
+#
+# The applet asks codesign three different questions and reads the answers in
+# three different places, so a fake that only returned an exit code would leave
+# most of lib.notarize.sh untested:
+#
+#   -dvv / -dv          the signature description. REAL codesign writes this to
+#                       STDERR, which is why every call site in the applet ends
+#                       in 2>&1. The fake writes to stderr too: a fake that used
+#                       stdout would make signed_item_matches pass while the
+#                       real tool made it fail.
+#   -d --entitlements   the embedded entitlements plist, on STDOUT, because that
+#                       is where the applet redirects it to a file.
+#   --verify            an exit code and nothing else.
+#
+# A path with no record is an unsigned item: -dvv says so and fails, --verify
+# fails. That is the default, so a test only has to describe the signatures it
+# cares about.
+#
+# Records are written by sig_set in lib.test.notarize.sh; see there for the
+# vocabulary. This file only reads them.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+sig_dir="$fake_dir/sig"
+
+# The path argument is the last one for every form the applet uses. Taking the
+# last rather than scanning for "the one that is not a flag" keeps this honest
+# about what it supports: a form where that is untrue would misread the path
+# loudly rather than guessing at it.
+path=""
+mode="display"
+for arg in "$@"; do
+    path="$arg"
+    # Compared for equality against each argument in turn, not matched as a
+    # substring of the joined argument list: a path is user data here, and a
+    # bundle living in a directory called "--verify" must not change what this
+    # tool thinks it was asked.
+    case "$arg" in
+        --entitlements) mode="entitlements" ;;
+        --verify) mode="verify" ;;
+    esac
+done
+record="$sig_dir/$(fake_key "$path")"
+
+case "$mode" in
+    entitlements)
+        if [ -f "$record/entitlements" ]; then
+            /bin/cat "$record/entitlements"
+            exit 0
+        fi
+        # codesign prints nothing and fails for an item it cannot read. An app
+        # with no entitlements is a DIFFERENT case: it succeeds and prints an
+        # empty plist, which is why sig_set can store one.
+        exit 1
+        ;;
+    verify)
+        exit "$(fake_rc "$record/verify.rc" "$([ -d "$record" ] && echo 0 || echo 1)")"
+        ;;
+esac
+
+# Everything else is a -d display request.
+if [ -d "$record" ]; then
+    fake_emit "$record/info" >&2
+    exit "$(fake_rc "$record/display.rc" 0)"
+fi
+printf '%s: code object is not signed at all\n' "$path" >&2
+exit 1

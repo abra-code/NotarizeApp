@@ -1,0 +1,16 @@
+#!/bin/sh
+# helpers/recorder - a fake that only records, for the tools whose entire
+# observable effect on the world is that they were called at all.
+#
+# Installed under several names (pkill, open); $0's basename decides which log
+# it writes, so one file serves them all. Both are things a test must never let
+# happen for real: pkill matches every command line on the system, and open -R
+# raises the Finder in front of whoever is running the suite.
+#
+# Scriptable exit code, because "the tool was unavailable" is a real branch in
+# at least one caller.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+fake_emit "$fake_dir/$fake_name.out"
+exit "$(fake_rc "$fake_dir/$fake_name.rc" 0)"

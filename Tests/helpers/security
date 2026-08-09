@@ -1,0 +1,35 @@
+#!/bin/sh
+# helpers/security - a fake /usr/bin/security, covering "find-identity" only.
+#
+# The real tool reads the developer's keychain, so a test running it would
+# assert about whatever certificates happen to be installed on the machine -
+# which is the opposite of a test. list_signing_identities asks a DIFFERENT
+# policy for each target kind ("-p codesigning" for an app, "-p basic" for a
+# package, because an installer certificate is not valid for the codesigning
+# policy), so the answer is filed per policy. A fake that ignored the policy
+# would let a bug swapping the two pass unnoticed.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+[ "$1" = "find-identity" ] || {
+    printf 'fake security: only find-identity is modeled, got: %s\n' "$1" >&2
+    exit 70
+}
+
+policy=""
+want_policy=0
+for arg in "$@"; do
+    if [ "$want_policy" = "1" ]; then
+        policy="$arg"
+        want_policy=0
+    fi
+    [ "$arg" = "-p" ] && want_policy=1
+done
+
+# The real listing is numbered lines of the form
+#   1) DEADBEEF "Developer ID Application: Someone (TEAMID12345)"
+# and the applet greps for the certificate class then pulls the quoted name out
+# with sed. The record holds the full lines so that grep and sed are exercised
+# rather than bypassed.
+fake_emit "$fake_dir/identities.$policy"
+exit 0

@@ -1,0 +1,73 @@
+#!/bin/sh
+# helpers/productsign - a fake /usr/bin/productsign.
+#
+# Signing a package for real needs a Developer ID Installer certificate and
+# rewrites the file. This fake does the two things the applet's own logic
+# depends on afterwards:
+#
+#   1. It produces the output file, because sign_package checks for it and then
+#      renames it over the original. Without that the atomic-replace path could
+#      not be tested at all.
+#   2. On success it records the result in the FAKE PKGUTIL WORLD, so the
+#      pipeline's own post-sign check ("is it actually signed now?") sees what a
+#      real productsign would have left behind. A fake that skipped this would
+#      make Notarize.run fail at a step that succeeds in reality.
+
+. "$(/usr/bin/dirname "$0")/fake_record.sh"
+
+identity=""
+input=""
+output=""
+want_identity=0
+for arg in "$@"; do
+    if [ "$want_identity" = "1" ]; then
+        identity="$arg"
+        want_identity=0
+        continue
+    fi
+    case "$arg" in
+        --sign) want_identity=1 ;;
+        *)
+            if [ -z "$input" ]; then
+                input="$arg"
+            else
+                output="$arg"
+            fi
+            ;;
+    esac
+done
+
+rc="$(fake_rc "$fake_dir/productsign.rc" 0)"
+fake_emit "$fake_dir/productsign.out"
+if [ "$rc" != "0" ]; then
+    # A failure that leaves a PARTIAL output behind is the interesting one:
+    # sign_package's cleanup of its temporary neighbor is unfalsifiable
+    # against a fake that fails before creating anything, and a half-written
+    # temporary next to the user's package is exactly what must not survive.
+    if [ -f "$fake_dir/productsign.partial" ] && [ -n "$output" ]; then
+        printf 'half a package' > "$output"
+    fi
+    exit "$rc"
+fi
+
+/bin/cp "$input" "$output" || exit 1
+
+# Keep the world consistent: the signed package now reports as signed for
+# distribution by this identity, exactly as resign_reason_pkg and
+# package_is_signed will go on to read it.
+record="$fake_dir/pkgsig/$(fake_key "$output")"
+/bin/mkdir -p "$(/usr/bin/dirname "$record")"
+{
+    printf 'Package "%s":\n' "$(/usr/bin/basename "$output")"
+    printf '   Status: signed by a developer certificate issued by Apple for distribution\n'
+    printf '   Signed with a trusted timestamp on: 2026-08-09 00:00:00 +0000\n'
+    printf '   Certificate Chain:\n'
+    printf '    1. %s\n' "$identity"
+} > "$record.out"
+
+# sign_package renames the temporary over the original, so the record has to
+# follow it there too - otherwise the post-sign check would ask about a path
+# whose record was left behind under the temporary name.
+final="$fake_dir/pkgsig/$(fake_key "$input")"
+/bin/cp "$record.out" "$final.out"
+exit 0
