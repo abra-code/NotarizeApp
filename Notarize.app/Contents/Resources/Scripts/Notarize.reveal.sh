@@ -4,5 +4,5 @@ source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
 app="$(work_target)"
 if [ -n "$app" ] && [ -e "$app" ]; then
-    /usr/bin/open -R "$app"
+    "$open_tool" -R "$app"
 fi

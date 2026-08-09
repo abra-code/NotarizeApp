@@ -8,7 +8,7 @@ A native macOS GUI for Apple's notarization workflow. Drop an app or an installe
 
 ## Overview
 
-Notarize wraps the Apple toolchain (`codesign`, `productsign`, `xcrun notarytool`, `stapler`) in a single document window: drop or open a `.app` bundle or a `.pkg` installer package, pick a credential profile, and click **Notarize**. Each target gets its own window; a secondary sheet handles credential setup.
+Notarize wraps the Apple toolchain (`codesign`, `productsign`, `xcrun notarytool`, `stapler`) in a single document window: drop a `.app` bundle or a `.pkg` installer package on the Notarize icon (or open one from the Open panel), pick a credential profile, and click **Notarize**. Each target gets its own window, bound to that target for as long as the window is open - opening a second target opens a second window rather than repurposing the first. A secondary sheet handles credential setup.
 
 The two kinds of target take the same route through the window but differ at every step that touches a signature or an upload, and Notarize picks the right one for you:
 
@@ -21,7 +21,7 @@ The two kinds of target take the same route through the window but differ at eve
 | Gatekeeper check | `spctl --type execute` | `spctl --type install` |
 | Stapled with | `stapler staple` | `stapler staple` |
 
-Old bundle-style packages (a `.pkg` that is a folder) are rejected with an explanation: the notary service only accepts flat packages, which is what `productbuild` produces. A flat `.mpkg` is accepted too, but only by dropping it on the window - the file panels filter on the flat-package type, which `.mpkg` does not claim.
+Old bundle-style packages (a `.pkg` that is a folder) are rejected with an explanation: the notary service only accepts flat packages, which is what `productbuild` produces. A flat `.mpkg` is accepted too, but only by dropping it on the Notarize icon - the Open panel filters on the flat-package type, which `.mpkg` does not claim.
 
 ---
 
@@ -65,7 +65,7 @@ A missing certificate is not a dead end either. Notarizing requires the target t
 
 Either way the log says which of the two applies - that you asked for it, or that there was no certificate to use - and **Sign Only** in the Actions menu tells you the same rather than appearing to ignore the button.
 
-Signing a package replaces it atomically: `productsign` writes a hidden neighbour that is then renamed into place, so an interrupted run leaves either the old package or the new one, never a half-written file.
+Signing a package replaces it atomically: `productsign` writes a hidden neighbor that is then renamed into place, so an interrupted run leaves either the old package or the new one, never a half-written file.
 
 ### Entitlements
 
@@ -81,7 +81,7 @@ Settings are remembered per target, keyed by bundle identifier for an app and by
 
 Opened from the **Credentials...** button, a guided wizard creates and validates a notary keychain profile with `notarytool store-credentials`, choosing Apple ID or API-key authentication. It does not require an app to be loaded. Set credentials up once, then notarize many apps.
 
-An existing profile is never replaced without asking. `notarytool store-credentials` treats its profile name as one "to create or update" and overwrites a matching profile in place, with no prompt and no way to recover what was there - the credentials it replaces cannot be read back out of the keychain by anything, including this app. That is easy to walk into: the wizard suggests a name, and the suggestion survives backing out and choosing a different authentication method, so an API-key save can land on the name an Apple ID profile is already using. So the wizard flags a name it already knows as soon as you type it, and confirms before it writes over anything - cancelling leaves the stored credentials exactly as they were.
+An existing profile is never replaced without asking. `notarytool store-credentials` treats its profile name as one "to create or update" and overwrites a matching profile in place, with no prompt and no way to recover what was there - the credentials it replaces cannot be read back out of the keychain by anything, including this app. That is easy to walk into: the wizard suggests a name, and the suggestion survives backing out and choosing a different authentication method, so an API-key save can land on the name an Apple ID profile is already using. So the wizard flags a name it already knows as soon as you type it, and confirms before it writes over anything - canceling leaves the stored credentials exactly as they were.
 
 Profiles created outside this app are checked too. They cannot be listed - `notarytool` keeps them in Apple's data protection keychain, where `security find-generic-password` cannot see them - so the wizard asks `notarytool` about the one name you typed. A name it has never registered and `notarytool` reports as absent is treated as free; anything else, including a profile whose credentials have expired or a notary service that cannot be reached, is treated as in use. Being wrong in that direction costs a confirmation you did not need. Being wrong the other way destroys credentials without asking.
 
@@ -135,10 +135,10 @@ The app runs as-is; it invokes system tools and bundles nothing to build. After 
 ./codesign_applet.sh Notarize.app "Developer ID Application: ..."       # for distribution
 ```
 
-(And yes — you can notarize Notarize with itself.)
+(And yes - you can notarize Notarize with itself.)
 
 ---
 
 ## License
 
-Notarize is licensed under the Apache License 2.0 — see [LICENSE](LICENSE).
+Notarize is licensed under the Apache License 2.0 - see [LICENSE](LICENSE).

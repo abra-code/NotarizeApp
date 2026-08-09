@@ -13,7 +13,7 @@ clear_log
 rail_set "$RAIL_VALIDATE_ID" running
 set_status "Validating..."
 append_log "stapler validate:"
-out="$(/usr/bin/xcrun stapler validate "$target" 2>&1)"
+out="$("$xcrun_tool" stapler validate "$target" 2>&1)"
 staple_rc=$?
 append_log "$out"
 run_spctl "$target"

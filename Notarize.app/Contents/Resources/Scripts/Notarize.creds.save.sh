@@ -19,7 +19,7 @@ if [ "$method" = "3" ]; then
     # group com.apple.gke.notary) and cannot be enumerated by other apps, so
     # the user supplies the name and notarytool itself verifies it exists.
     set_value "$CRED_RESULT_ID" "Checking profile '$profile' with the notary service..."
-    out="$(/usr/bin/xcrun notarytool history --keychain-profile "$profile" --output-format json 2>&1)"
+    out="$("$xcrun_tool" notarytool history --keychain-profile "$profile" --output-format json 2>&1)"
     if [ "$?" = "0" ]; then
         known_profiles_add "$profile"
         prefs_set default_profile "$profile"
@@ -60,7 +60,7 @@ Saving replaces the credentials stored under that name. The old ones cannot be r
 To keep both, cancel and choose a different name."
     answer=$?
     if [ "$answer" = "1" ]; then
-        set_value "$CRED_RESULT_ID" "Cancelled. The profile '$profile' was left as it was."
+        set_value "$CRED_RESULT_ID" "Canceled. The profile '$profile' was left as it was."
         exit 0
     fi
     if [ "$answer" != "0" ]; then
@@ -85,7 +85,7 @@ if [ "$method" = "2" ]; then
         set_value "$CRED_RESULT_ID" "Fill in the API key path, Key ID, and Issuer."
         exit 0
     fi
-    out="$(/usr/bin/xcrun notarytool store-credentials "$profile" --key "$keyfile" --key-id "$keyid" --issuer "$issuer" 2>&1)"
+    out="$("$xcrun_tool" notarytool store-credentials "$profile" --key "$keyfile" --key-id "$keyid" --issuer "$issuer" 2>&1)"
     rc=$?
 else
     # Apple ID + app-specific password (password handed to stdin, never argv).
@@ -96,7 +96,7 @@ else
         set_value "$CRED_RESULT_ID" "Fill in the Apple ID, Team ID, and app-specific password."
         exit 0
     fi
-    out="$(printf '%s' "$password" | /usr/bin/xcrun notarytool store-credentials "$profile" --apple-id "$appleid" --team-id "$team" 2>&1)"
+    out="$(printf '%s' "$password" | "$xcrun_tool" notarytool store-credentials "$profile" --apple-id "$appleid" --team-id "$team" 2>&1)"
     rc=$?
 fi
 

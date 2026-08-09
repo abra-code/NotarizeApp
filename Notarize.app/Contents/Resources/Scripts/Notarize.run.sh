@@ -45,7 +45,7 @@ finish() {
 
 pb_set "$PB_BUSY" 1
 printf '%s' "$$" > "$(state_dir)/run.pid"
-/bin/rm -f "$(state_dir)/cancelled"
+/bin/rm -f "$(state_dir)/canceled"
 enable_view "$NOTARIZE_BTN_ID" 0
 rail_enable 0
 show_view "$REVEAL_BTN_ID" 0

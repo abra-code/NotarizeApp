@@ -19,7 +19,7 @@ if [ "$(target_kind_of "$target")" = "pkg" ]; then
     run_pkg_signature_check "$target"
 else
     append_log "codesign -dv --verbose=4:"
-    out="$(/usr/bin/codesign -dv --verbose=4 "$target" 2>&1)"
+    out="$("$codesign_tool" -dv --verbose=4 "$target" 2>&1)"
     append_log "$out"
     run_codesign_verify "$target"
     # The nested-code state is the clue a bare "rejected" from spctl withholds,
@@ -28,6 +28,6 @@ else
 fi
 run_spctl "$target"
 append_log "Staple status:"
-sout="$(/usr/bin/xcrun stapler validate "$target" 2>&1)"
+sout="$("$xcrun_tool" stapler validate "$target" 2>&1)"
 append_log "$sout"
 set_status "Signature inspection complete."

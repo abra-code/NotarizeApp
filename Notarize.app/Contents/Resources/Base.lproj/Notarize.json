@@ -64,60 +64,12 @@
                     "spacing": 10,
                     "alignment": "leading",
                     "padding": "default",
-                    "onDropTypes": [
-                        "public.file-url"
-                    ],
-                    "onDropActionID": "Notarize.drop",
                     "frame": {
                         "maxWidth": "infinity",
                         "maxHeight": "infinity"
                     }
                 },
                 "children": [
-                    {
-                        "type": "GroupBox",
-                        "properties": {
-                            "title": "Target",
-                            "frame": {
-                                "maxWidth": "infinity"
-                            }
-                        },
-                        "children": [
-                            {
-                                "type": "HStack",
-                                "properties": {
-                                    "spacing": 8
-                                },
-                                "children": [
-                                    {
-                                        "type": "Text",
-                                        "id": 40,
-                                        "properties": {
-                                            "text": "Nothing chosen - drop a .app or .pkg here, or click Choose.",
-                                            "font": {
-                                                "size": 11,
-                                                "design": "monospaced"
-                                            },
-                                            "foregroundStyle": "secondary",
-                                            "frame": {
-                                                "maxWidth": "infinity",
-                                                "alignment": "leading"
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "type": "Button",
-                                        "id": 41,
-                                        "properties": {
-                                            "title": "Choose...",
-                                            "actionID": "Notarize.choose.app",
-                                            "help": "Choose a .app bundle or .pkg installer package to notarize"
-                                        }
-                                    }
-                                ]
-                            }
-                        ]
-                    },
                     {
                         "type": "GroupBox",
                         "properties": {
@@ -470,7 +422,7 @@
                                                         "type": "Text",
                                                         "id": 60,
                                                         "properties": {
-                                                            "text": "Drop an app or installer package to notarize, or choose one.",
+                                                            "text": "Nothing to notarize. Drop a .app or a flat .pkg on the Notarize icon.",
                                                             "font": "footnote",
                                                             "foregroundStyle": "secondary",
                                                             "frame": {

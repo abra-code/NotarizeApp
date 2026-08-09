@@ -18,16 +18,39 @@ alert_tool="$support_path/alert"
 notify_tool="$support_path/notify"
 plister="$support_path/plister"
 
-# System tools are called by absolute path inline (e.g. /usr/bin/codesign).
+# --- System tools that have to be substitutable ------------------------------
+# Most system tools are called by absolute path inline (/usr/bin/sed, /bin/rm)
+# and stay that way. The ones below are named through a variable instead,
+# because every one of them reaches outside this process in a way a test cannot
+# allow: the keychain, the notary service, Gatekeeper's assessment cache, the
+# signature on a real bundle, another process, the Finder.
+#
+# omctest intercepts the OMC support tools by rebuilding $OMC_OMC_SUPPORT_PATH,
+# which cannot reach an absolute path, so this variable is the only seam
+# available (omctest_guide.md section 8). One variable per binary, holding
+# exactly one word: a multi-word invocation keeps its subcommand at the call
+# site, as in "$xcrun_tool" notarytool submit.
+#
+# Nothing sets these in normal use - the defaults are the real tools, and the
+# environment overrides exist for the test suite in ../Tests.
+codesign_tool="${NOTARIZE_CODESIGN_TOOL:-/usr/bin/codesign}"
+productsign_tool="${NOTARIZE_PRODUCTSIGN_TOOL:-/usr/bin/productsign}"
+pkgutil_tool="${NOTARIZE_PKGUTIL_TOOL:-/usr/sbin/pkgutil}"
+spctl_tool="${NOTARIZE_SPCTL_TOOL:-/usr/sbin/spctl}"
+security_tool="${NOTARIZE_SECURITY_TOOL:-/usr/bin/security}"
+xcrun_tool="${NOTARIZE_XCRUN_TOOL:-/usr/bin/xcrun}"
+pkill_tool="${NOTARIZE_PKILL_TOOL:-/usr/bin/pkill}"
+open_tool="${NOTARIZE_OPEN_TOOL:-/usr/bin/open}"
+# The bundled signer, which is itself a wrapper around codesign. It is inside
+# the bundle rather than in /usr/bin, but it is no more substitutable for that -
+# running it for real would sign whatever it was pointed at.
+codesign_applet="${NOTARIZE_CODESIGN_APPLET:-$app_bundle/Contents/Resources/Scripts/codesign_applet.sh}"
 
 # --- View IDs (match Notarize.json) ---
 # Toolbar
 NOTARIZE_BTN_ID=30
 CANCEL_BTN_ID=32
 CREDENTIALS_BTN_ID=33
-# Application group
-APP_PATH_ID=40
-CHOOSE_APP_BTN_ID=41
 # Settings group
 IDENTITY_PICKER_ID=50
 PROFILE_PICKER_ID=51
@@ -77,7 +100,10 @@ CRED_HINT_EXISTING_ID=822
 CRED_STEP3_TITLE_ID=823
 
 # --- Preferences (persist across launches) ---
-prefs_dir="$HOME/Library/Application Support/Notarize"
+# Overridable for the same reason the system tools above are: these are the
+# developer's real settings, and a test that wrote known_profiles or
+# default_identity into them would edit the machine it runs on.
+prefs_dir="${NOTARIZE_PREFS_DIR:-$HOME/Library/Application Support/Notarize}"
 prefs_file="$prefs_dir/prefs.plist"
 
 # --- Per-document pasteboard keys ---
@@ -418,7 +444,7 @@ notary_profile_exists() {
     # Declared apart from its assignment so the next line reads notarytool's exit
     # status and not local's, which is always 0.
     local probe
-    probe="$(/usr/bin/xcrun notarytool history --keychain-profile "$1" 2>&1)"
+    probe="$("$xcrun_tool" notarytool history --keychain-profile "$1" 2>&1)"
     local rc=$?
     # Absence is the only answer that permits an overwrite, so both halves have
     # to agree: the command failed, and it failed in the one way that means this.
@@ -463,7 +489,7 @@ list_signing_identities() {
         certificate_class="Developer ID Application"
         policy="codesigning"
     fi
-    /usr/bin/security find-identity -v -p "$policy" 2>/dev/null \
+    "$security_tool" find-identity -v -p "$policy" 2>/dev/null \
         | /usr/bin/grep "$certificate_class" \
         | /usr/bin/sed 's/.*"\(.*\)".*/\1/'
 }
@@ -608,14 +634,21 @@ canonical_path() {
     printf '%s/%s' "$dir" "$base"
 }
 
-# Strip the file:// scheme (and optional host) and percent-decode a file URL.
-# Arguments: url
-url_to_path() {
-    local raw="$(printf '%s' "$1" | /usr/bin/sed 's|^file://[^/]*||')"
-    printf '%b' "$(printf '%s' "$raw" | /usr/bin/sed 's/%/\\x/g')"
-}
-
-# Store the target app path; forget any release copy of the previous target.
+# Store the target app path. Called exactly once per window, from
+# Notarize.main.init, with the object OMC opened the window on.
+#
+# The window is a single-document window and must stay bound to that one target.
+# OMC sets the window's representedURL - the proxy icon, the command-click path
+# menu, the Recent Documents entry - from the opened object once, in the
+# associated-object branch of window creation (OMCActionUIWindowController), and
+# never again. The runtime title verb sets a title string only, so it cannot
+# even paper over the difference. A second target adopted mid-window therefore
+# leaves the title naming one app while every field describes another, and the
+# applet has no way to reconcile them. That is why there is no in-window drop
+# target and no chooser button - a new target means a new window, opened from
+# the Notarize icon or the app's own Open panel. Keep it that way; the resets
+# below are only belt and braces.
+#
 # Arguments: path
 set_target() {
     printf '%s' "$1" > "$(state_dir)/target.txt"
@@ -781,7 +814,6 @@ refresh_target_ui() {
     local target="$(get_target)"
     if [ -n "$target" ]; then
         local kind="$(target_kind_of "$target")"
-        set_value "$APP_PATH_ID" "$target"
         # A package has no entitlements and no hardened runtime, so the field
         # cannot affect the outcome. Disable it rather than hiding it: ActionUI
         # maps "hidden" to SwiftUI's .hidden(), which is visual only and keeps
@@ -796,11 +828,25 @@ refresh_target_ui() {
             set_status "Ready: $(/usr/bin/basename "$target")"
         fi
     else
-        set_entitlements_enabled "app"
-        set_value "$APP_PATH_ID" "Nothing chosen - drop a .app or .pkg here, or click Choose."
+        # Reachable only when the window was opened on something unsupported -
+        # the Info.plist claims every document type, so anything can be dropped
+        # on the app icon. There is no in-window recovery by design (the window
+        # is bound to one target), so the status line has to name the way out.
+        #
+        # Every setting is disabled too, not just the actions. The settings are
+        # stored per product and app_prefs_key is empty with no target, so
+        # app_pref_set returns early: a path typed or browsed into either field
+        # here is silently thrown away. Better to refuse the input than to take
+        # it and lose it.
+        set_value "$ENTITLEMENTS_FIELD_ID" ""
+        enable_view "$ENTITLEMENTS_FIELD_ID" 0
+        enable_view "$ENTITLEMENTS_BROWSE_ID" 0
+        set_value "$OUTPUT_FIELD_ID" ""
+        enable_view "$OUTPUT_FIELD_ID" 0
+        enable_view "$OUTPUT_BROWSE_ID" 0
         enable_view "$NOTARIZE_BTN_ID" 0
         rail_enable 0
-        set_status "Drop an app or installer package to notarize, or choose one."
+        set_status "Nothing to notarize. Drop a .app or a flat .pkg on the Notarize icon."
     fi
 }
 
@@ -1075,7 +1121,7 @@ prepare_release_copy() {
 # Sign an installer package with productsign. Arguments: pkg_path, identity.
 # Returns 0 on success, 1 on failure.
 #
-# productsign cannot write in place, so it signs to a temporary neighbour which
+# productsign cannot write in place, so it signs to a temporary neighbor which
 # then replaces the original. The temporary lives in the same directory as the
 # package on purpose: rename within one filesystem is atomic, so an interrupted
 # run leaves either the old package or the new one, never a half-written file.
@@ -1092,7 +1138,7 @@ sign_package() {
     # Declared before the assignment, not with it: "local out=$(...)" would make
     # the next line read local's own exit status instead of productsign's.
     local out
-    out="$(/usr/bin/productsign --sign "$identity" "$pkg" "$temp_pkg" 2>&1)"
+    out="$("$productsign_tool" --sign "$identity" "$pkg" "$temp_pkg" 2>&1)"
     local rc=$?
     if [ -n "$out" ]; then
         append_log "$out"
@@ -1126,7 +1172,7 @@ extract_entitlements() {
     local count
 
     /bin/rm -f "$dest"
-    /usr/bin/codesign -d --entitlements - --xml "$app" > "$dest" 2>/dev/null
+    "$codesign_tool" -d --entitlements - --xml "$app" > "$dest" 2>/dev/null
     if [ "$?" != "0" ] || [ ! -s "$dest" ]; then
         /bin/rm -f "$dest"
         return 1
@@ -1230,7 +1276,7 @@ entitlements_match() {
 # require_runtime ("yes" to insist on the hardened runtime flag)
 # Returns 0 when it matches, 1 when it does not.
 signed_item_matches() {
-    local info="$(/usr/bin/codesign -dvv "$1" 2>&1)"
+    local info="$("$codesign_tool" -dvv "$1" 2>&1)"
     local authority="$(printf '%s\n' "$info" | /usr/bin/sed -n 's/^Authority=//p' | /usr/bin/head -1)"
     if [ -n "$2" ]; then
         [ "$authority" = "$2" ] || return 1
@@ -1279,7 +1325,7 @@ resign_reason_app() {
     # Set by "read" once the listing loop is reached.
     local item
 
-    if ! /usr/bin/codesign --verify --deep --strict "$app" >/dev/null 2>&1; then
+    if ! "$codesign_tool" --verify --deep --strict "$app" >/dev/null 2>&1; then
         printf 'the existing signature is missing or does not verify'
         return 0
     fi
@@ -1287,7 +1333,7 @@ resign_reason_app() {
     # the hardened runtime, or a secure timestamp, so a signature lacking any of
     # them has to be replaced no matter who made it.
     if ! signed_item_matches "$app" "$identity" yes; then
-        local authority="$(/usr/bin/codesign -dvv "$app" 2>&1 | /usr/bin/sed -n 's/^Authority=//p' | /usr/bin/head -1)"
+        local authority="$("$codesign_tool" -dvv "$app" 2>&1 | /usr/bin/sed -n 's/^Authority=//p' | /usr/bin/head -1)"
         if [ -z "$authority" ]; then
             printf 'the outer bundle carries no Developer ID signature'
         elif [ -n "$identity" ] && [ "$authority" != "$identity" ]; then
@@ -1309,7 +1355,7 @@ resign_reason_app() {
     # second copy of the rules that could drift out of step with it.
     local listing="$(state_dir)/code-listing.txt"
     /bin/rm -f "$listing"
-    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --list-code "$app" > "$listing" 2>/dev/null
+    "$codesign_applet" --list-code "$app" > "$listing" 2>/dev/null
     # An empty listing has to count as a failure, not as "nothing to check".
     # Every app bundle contains at least its own main executable, so an empty
     # result means the enumeration did not work - and treating that as all-clear
@@ -1354,7 +1400,7 @@ resign_reason_app() {
 resign_reason_pkg() {
     local pkg="$1"
     local identity="$2"
-    local info="$(/usr/sbin/pkgutil --check-signature "$pkg" 2>&1)"
+    local info="$("$pkgutil_tool" --check-signature "$pkg" 2>&1)"
 
     case "$info" in
         *'Status: signed by a developer certificate issued by Apple for distribution'*) ;;
@@ -1434,7 +1480,7 @@ sign_app() {
 
     local signlog="$(state_dir)/sign.log"
     append_log "Signing $(/usr/bin/basename "$app") (log: sign.log)..."
-    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --brief --no-entitlements-search "$app" "$identity" "$entitlements" > "$signlog" 2>&1
+    "$codesign_applet" --brief --no-entitlements-search "$app" "$identity" "$entitlements" > "$signlog" 2>&1
     local rc=$?
 
     # Brief output is already curated; mirror every line into the UI log.
@@ -1456,7 +1502,7 @@ sign_app() {
 run_codesign_verify() {
     append_log "Verifying code signature..."
     local out
-    out="$(/usr/bin/codesign --verify --strict --verbose=2 "$1" 2>&1)"
+    out="$("$codesign_tool" --verify --strict --verbose=2 "$1" 2>&1)"
     local rc=$?
     _log "$out"
     if [ "$rc" = "0" ]; then
@@ -1479,7 +1525,7 @@ run_codesign_verify() {
 # exactly the packages this check exists to stop, only for the notary service
 # to reject them after the upload.
 package_is_signed() {
-    /usr/sbin/pkgutil --check-signature "$1" 2>/dev/null \
+    "$pkgutil_tool" --check-signature "$1" 2>/dev/null \
         | /usr/bin/grep -q "Status: signed by a developer certificate issued by Apple for distribution"
 }
 
@@ -1491,7 +1537,7 @@ package_is_signed() {
 # tool failure, and only the former should be treated as a signature problem.
 run_pkg_signature_check() {
     append_log "Checking installer package signature..."
-    local out="$(/usr/sbin/pkgutil --check-signature "$1" 2>&1)"
+    local out="$("$pkgutil_tool" --check-signature "$1" 2>&1)"
     append_log "$out"
     if package_is_signed "$1"; then
         return 0
@@ -1524,7 +1570,7 @@ list_uncertified_nested_items() {
     local app="$1"
     local listing="$(state_dir)/preflight-listing.txt"
     /bin/rm -f "$listing"
-    "$app_bundle/Contents/Resources/Scripts/codesign_applet.sh" --list-code "$app" > "$listing" 2>/dev/null
+    "$codesign_applet" --list-code "$app" > "$listing" 2>/dev/null
     local rc=$?
     # Every app bundle holds at least its own main executable, so an empty
     # listing means the enumeration failed. Reporting that beats reporting
@@ -1538,7 +1584,7 @@ list_uncertified_nested_items() {
     local item info authority
     while IFS= read -r item; do
         [ -n "$item" ] || continue
-        info="$(/usr/bin/codesign -dvv "$item" 2>&1)"
+        info="$("$codesign_tool" -dvv "$item" 2>&1)"
         case "$info" in
             *"code object is not signed at all"*)
                 printf '  %s - not signed\n' "${item#"$app"/}"
@@ -1639,7 +1685,7 @@ run_spctl() {
         assessment_type="execute"
     fi
     append_log "Gatekeeper assessment (--type $assessment_type):"
-    out="$(/usr/sbin/spctl --assess --type "$assessment_type" --verbose=4 "$1" 2>&1)"
+    out="$("$spctl_tool" --assess --type "$assessment_type" --verbose=4 "$1" 2>&1)"
     local rc=$?
     append_log "$out"
     if [ "$rc" != "0" ]; then
@@ -1654,7 +1700,7 @@ run_spctl() {
 submit_and_wait() {
     local out="$(state_dir)/notary-submit.json"
     append_log "Uploading to the Apple notary service (this can take several minutes)..."
-    /usr/bin/xcrun notarytool submit "$1" --keychain-profile "$2" --wait --output-format json --timeout 30m > "$out" 2>> "$(state_dir)/run.log"
+    "$xcrun_tool" notarytool submit "$1" --keychain-profile "$2" --wait --output-format json --timeout 30m > "$out" 2>> "$(state_dir)/run.log"
     local rc=$?
     local id="$("$plister" get value "$out" /id 2>/dev/null)"
     local status="$("$plister" get value "$out" /status 2>/dev/null)"
@@ -1688,7 +1734,7 @@ submission_status() {
 # Arguments: submission_id, profile_name
 fetch_log() {
     local logf="$(state_dir)/notary-log.json"
-    /usr/bin/xcrun notarytool log "$1" --keychain-profile "$2" "$logf" 2>> "$(state_dir)/run.log"
+    "$xcrun_tool" notarytool log "$1" --keychain-profile "$2" "$logf" 2>> "$(state_dir)/run.log"
     return $?
 }
 
@@ -1720,12 +1766,12 @@ print_issues() {
 # Staple the notarization ticket to the app and validate. Arguments: app_path
 staple_app() {
     append_log "Stapling notarization ticket..."
-    /usr/bin/xcrun stapler staple "$1"
+    "$xcrun_tool" stapler staple "$1"
     if [ "$?" != "0" ]; then
         append_log "ERROR: stapling failed."
         return 1
     fi
-    /usr/bin/xcrun stapler validate "$1"
+    "$xcrun_tool" stapler validate "$1"
     if [ "$?" != "0" ]; then
         append_log "WARNING: staple validation reported a problem."
     fi

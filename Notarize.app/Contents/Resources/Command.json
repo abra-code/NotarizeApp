@@ -34,25 +34,6 @@
     },
     {
       "NAME": "Notarize",
-      "COMMAND_ID": "Notarize.drop",
-      "EXECUTION_MODE": "exe_script_file"
-    },
-    {
-      "NAME": "Notarize",
-      "COMMAND_ID": "Notarize.choose.app",
-      "EXECUTION_MODE": "exe_script_file",
-      "CHOOSE_OBJECT_DIALOG": {
-        "MESSAGE": "Choose an app (.app) or installer package (.pkg) to notarize",
-        "ALLOWED_CONTENT_TYPES": [
-          "com.apple.application-bundle",
-          "com.apple.installer-package-archive"
-        ],
-        "USE_PATH_CACHING": true,
-        "BUTTON_PROMPT": "Choose"
-      }
-    },
-    {
-      "NAME": "Notarize",
       "COMMAND_ID": "Notarize.choose.entitlements",
       "EXECUTION_MODE": "exe_script_file",
       "CHOOSE_FILE_DIALOG": {

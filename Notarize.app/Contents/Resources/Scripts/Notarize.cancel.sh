@@ -2,7 +2,7 @@
 # Notarize.cancel.sh - stop a running pipeline and reset the UI (best effort)
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.notarize.sh"
 
-/usr/bin/touch "$(state_dir)/cancelled"
+/usr/bin/touch "$(state_dir)/canceled"
 
 pidfile="$(state_dir)/run.pid"
 if [ -f "$pidfile" ]; then
@@ -22,12 +22,12 @@ fi
 # lives - could match more than intended. notarytool is a child of the pipeline
 # anyway, so the process-group kill above already covers it; this is the backstop
 # for the one path we know is ours.
-/usr/bin/pkill -f "$(state_dir)/upload.zip" 2>/dev/null
+"$pkill_tool" -f "$(state_dir)/upload.zip" 2>/dev/null
 
 show_progress 0
 enable_view "$CANCEL_BTN_ID" 0
 enable_view "$NOTARIZE_BTN_ID" 1
 rail_enable 1
 pb_set "$PB_BUSY" ""
-append_log "Cancelled by user."
-set_status "Cancelled."
+append_log "Canceled by user."
+set_status "Canceled."

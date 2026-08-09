@@ -12,7 +12,7 @@ if [ -z "$profile" ]; then
 fi
 
 set_value "$CRED_RESULT_ID" "Testing profile $profile..."
-out="$(/usr/bin/xcrun notarytool history --keychain-profile "$profile" --output-format json 2>&1)"
+out="$("$xcrun_tool" notarytool history --keychain-profile "$profile" --output-format json 2>&1)"
 rc=$?
 if [ "$rc" = "0" ]; then
     # The profile is proven to work - remember it and reflect it in the
