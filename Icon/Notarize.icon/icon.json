@@ -1,0 +1,68 @@
+{
+  "fill" : {
+    "automatic-gradient" : "extended-srgb:0.91765,0.91765,0.91765,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "linear-gradient" : [
+                  "srgb:0.40392,0.29412,0.78039,1.00000",
+                  "display-p3:0.26275,0.12157,0.66275,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.5,
+                    "y" : 1
+                  },
+                  "stop" : {
+                    "x" : 0.5,
+                    "y" : 0.9677725647899912
+                  }
+                }
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "automatic-gradient" : "extended-srgb:0.38039,0.33333,0.96078,1.00000"
+              }
+            },
+            {
+              "appearance" : "tinted",
+              "value" : {
+                "automatic-gradient" : "extended-srgb:0.38039,0.33333,0.96078,1.00000"
+              }
+            }
+          ],
+          "glass" : true,
+          "image-name" : "checkmark.seal.fill.svg",
+          "name" : "checkmark.seal.fill",
+          "position" : {
+            "scale" : 1.2,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 # Notarize
+![Notarize Icon](Icon/Notarize-macOS-256x256@1x.png)
 
 A native macOS GUI for Apple's notarization workflow. Drop an app or an installer package on Notarize and it runs the full pipeline - sign, submit to Apple's notary service, wait for the result, staple the ticket, and assess the result - or run any single step on its own. Notary credentials are set up once through a guided wizard and reused across every target.
 
