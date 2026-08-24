@@ -39,8 +39,8 @@
             }
           ],
           "glass" : true,
-          "image-name" : "checkmark.seal.fill.svg",
-          "name" : "checkmark.seal.fill",
+          "image-name" : "seal-check.svg",
+          "name" : "seal-check",
           "position" : {
             "scale" : 1.2,
             "translation-in-points" : [
