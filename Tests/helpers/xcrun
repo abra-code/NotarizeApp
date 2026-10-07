@@ -46,6 +46,26 @@ case "$tool/$sub" in
         fake_emit "$fake_dir/notarytool.submit.out"
         exit "$(fake_rc "$fake_dir/notarytool.submit.rc" 0)"
         ;;
+    notarytool/info)
+        # The applet asks this in a loop until the status is no longer
+        # "In Progress". The first notarytool.info.pending calls answer
+        # "In Progress" (or nothing at all when notarytool.info.silent is
+        # there), then the scripted verdict follows.
+        count="$(/bin/cat "$fake_dir/notarytool.info.count" 2>/dev/null)"
+        count=$(( ${count:-0} + 1 ))
+        printf '%s' "$count" > "$fake_dir/notarytool.info.count"
+        pending="$(/bin/cat "$fake_dir/notarytool.info.pending" 2>/dev/null)"
+        if [ "$count" -le "${pending:-0}" ]; then
+            if [ -f "$fake_dir/notarytool.info.silent" ]; then
+                printf 'Error: network connection was lost\n' >&2
+                exit 1
+            fi
+            printf '{"id":"x","status":"In Progress"}\n'
+            exit 0
+        fi
+        fake_emit "$fake_dir/notarytool.info.out"
+        exit "$(fake_rc "$fake_dir/notarytool.info.rc" 0)"
+        ;;
     notarytool/log)
         # "notarytool log <id> --keychain-profile <p> <destination>" writes the
         # log to the destination path rather than to stdout, and the applet then

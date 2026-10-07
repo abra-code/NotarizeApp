@@ -189,7 +189,16 @@ fi
 # 3. Submit and wait for the notary service.
 set_status "Submitting to the notary service..."
 submit_and_wait "$(upload_path)" "$profile"
-if [ "$?" != "0" ]; then
+submit_rc=$?
+if [ "$submit_rc" = "2" ]; then
+    # Uploaded, but no verdict in the time allowed: not a failed submission.
+    rail_set "$RAIL_SUBMIT_ID" failed
+    set_status "No verdict from Apple yet. See the log."
+    "$alert_tool" --level caution --title "Notarize" "The upload went through, but Apple has not given a verdict yet. The log says how to ask for it later."
+    finish
+    exit 0
+fi
+if [ "$submit_rc" != "0" ]; then
     rail_set "$RAIL_SUBMIT_ID" failed
     set_status "Submission failed."
     "$alert_tool" --level stop --title "Notarize" "Notarization submission failed. See the log."

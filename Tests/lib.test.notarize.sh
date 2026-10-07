@@ -123,7 +123,12 @@ NOTARIZE_PKILL_TOOL="$FAKE_BIN/pkill"
 NOTARIZE_OPEN_TOOL="$FAKE_BIN/open"
 NOTARIZE_CODESIGN_APPLET="$FAKE_BIN/codesign_applet.sh"
 
-export NOTARIZE_FAKE_DIR NOTARIZE_PREFS_DIR
+# The wait for the notary service's verdict: no pause between status requests,
+# and few enough of them that a verdict that never comes ends the test quickly.
+NOTARIZE_POLL_SECONDS=0
+NOTARIZE_POLL_LIMIT=5
+
+export NOTARIZE_FAKE_DIR NOTARIZE_PREFS_DIR NOTARIZE_POLL_SECONDS NOTARIZE_POLL_LIMIT
 export NOTARIZE_CODESIGN_TOOL NOTARIZE_PRODUCTSIGN_TOOL NOTARIZE_PKGUTIL_TOOL
 export NOTARIZE_SPCTL_TOOL NOTARIZE_SECURITY_TOOL NOTARIZE_XCRUN_TOOL
 export NOTARIZE_PKILL_TOOL NOTARIZE_OPEN_TOOL NOTARIZE_CODESIGN_APPLET
@@ -489,17 +494,39 @@ notary_store_stdin() {
 
 # --- notarytool and stapler ---------------------------------------------------
 
-# The JSON "notarytool submit --wait --output-format json" leaves behind. The
-# applet reads /id and /status out of it with plister, so this has to be real
-# JSON rather than a marker string.
+# The JSON "notarytool submit --output-format json" leaves behind once the
+# upload is done, and the JSON "notarytool info" answers with afterwards. The
+# applet reads /id out of the first and /status out of the second with plister,
+# so both have to be real JSON rather than a marker string.
 notary_submit_result() { # <status> [id]
-    printf '{"id":"%s","status":"%s","message":"Processing complete"}\n' \
-        "${2:-11111111-2222-3333-4444-555555555555}" "$1" \
+    local id="${2:-11111111-2222-3333-4444-555555555555}"
+    printf '{"id":"%s","message":"Successfully uploaded file","path":"upload.zip"}\n' "$id" \
         > "$NOTARIZE_FAKE_DIR/notarytool.submit.out"
     printf '0' > "$NOTARIZE_FAKE_DIR/notarytool.submit.rc"
+    printf '{"id":"%s","status":"%s","name":"upload.zip"}\n' "$id" "$1" \
+        > "$NOTARIZE_FAKE_DIR/notarytool.info.out"
+    printf '0' > "$NOTARIZE_FAKE_DIR/notarytool.info.rc"
+    /bin/rm -f "$NOTARIZE_FAKE_DIR/notarytool.info.count" \
+        "$NOTARIZE_FAKE_DIR/notarytool.info.pending" "$NOTARIZE_FAKE_DIR/notarytool.info.silent"
+}
+
+# Make the first <count> status requests answer "In Progress" before the
+# verdict set with notary_submit_result, or fail outright with "silent".
+# Call it after notary_submit_result.
+notary_verdict_after() { # <count> [silent]
+    printf '%s' "$1" > "$NOTARIZE_FAKE_DIR/notarytool.info.pending"
+    if [ "${2:-}" = "silent" ]; then
+        : > "$NOTARIZE_FAKE_DIR/notarytool.info.silent"
+    fi
+}
+
+# How many times the applet asked the notary service for a submission's status.
+notary_status_requests() {
+    /bin/cat "$NOTARIZE_FAKE_DIR/notarytool.info.count" 2>/dev/null || printf '0'
 }
 
 notary_submit_fails() {
+    /bin/rm -f "$NOTARIZE_FAKE_DIR/notarytool.info.count"
     : > "$NOTARIZE_FAKE_DIR/notarytool.submit.out"
     printf '1' > "$NOTARIZE_FAKE_DIR/notarytool.submit.rc"
 }

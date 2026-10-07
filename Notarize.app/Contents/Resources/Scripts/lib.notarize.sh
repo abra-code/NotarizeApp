@@ -1694,24 +1694,93 @@ run_spctl() {
     return $rc
 }
 
-# Submit a zip to the notary service and wait for a terminal status. Writes the
-# submission id and status to state files. Arguments: zip_path, profile_name.
-# Returns 0 if a terminal status was obtained.
+# How often the notary service is asked for its verdict, and how many times
+# before the wait is given up. The defaults add up to 30 minutes.
+notary_poll_seconds="${NOTARIZE_POLL_SECONDS:-20}"
+notary_poll_limit="${NOTARIZE_POLL_LIMIT:-90}"
+
+# Print a file's size for the log, as "47.6 MB". Arguments: path
+file_size_text() {
+    local bytes="$(/usr/bin/stat -f %z "$1" 2>/dev/null)"
+    /usr/bin/awk -v b="${bytes:-0}" 'BEGIN { printf "%.1f MB", b / 1000000 }'
+}
+
+# Upload a zip or package to the notary service, then wait for a terminal
+# status. The two are separate notarytool calls, not one "submit --wait": with
+# JSON output that one call prints nothing until the very end, so a slow upload
+# and a slow verdict look the same, and the submission id is unknown if the wait
+# is interrupted. Writes the submission id and status to state files.
+# Arguments: upload_path, profile_name. Returns 0 if a terminal status was
+# obtained, 1 if the upload failed, 2 if it was uploaded and the wait for a
+# verdict was given up.
 submit_and_wait() {
-    local out="$(state_dir)/notary-submit.json"
-    append_log "Uploading to the Apple notary service (this can take several minutes)..."
-    "$xcrun_tool" notarytool submit "$1" --keychain-profile "$2" --wait --output-format json --timeout 30m > "$out" 2>> "$(state_dir)/run.log"
+    local dir="$(state_dir)"
+    local out="$dir/notary-submit.json"
+    printf '' > "$dir/submission_status.txt"
+    append_log "Working files of this window (this log as run.log, the upload archive): $dir"
+    append_log "Uploading $(/usr/bin/basename "$1") ($(file_size_text "$1")) to the Apple notary service..."
+    "$xcrun_tool" notarytool submit "$1" --keychain-profile "$2" --output-format json > "$out" 2>> "$dir/run.log"
     local rc=$?
     local id="$("$plister" get value "$out" /id 2>/dev/null)"
-    local status="$("$plister" get value "$out" /status 2>/dev/null)"
-    printf '%s' "$id" > "$(state_dir)/submission_id.txt"
-    printf '%s' "$status" > "$(state_dir)/submission_status.txt"
-    if [ -z "$status" ]; then
-        append_log "ERROR: no status returned from the notary service (rc=$rc)."
+    printf '%s' "$id" > "$dir/submission_id.txt"
+    if [ -z "$id" ]; then
+        append_log "ERROR: the upload failed, no submission id returned from the notary service (rc=$rc)."
         return 1
     fi
-    append_log "Notary service status: $status (submission id $id)"
-    return 0
+    append_log "Upload complete. Submission id: $id"
+    append_log "Waiting for Apple's verdict. It usually takes a few minutes and at times much longer. Asking every $notary_poll_seconds seconds."
+    wait_for_verdict "$id" "$2"
+    return $?
+}
+
+# Ask the notary service about a submission until it gives a terminal status,
+# reporting the wait in the status line and once a minute in the log.
+# Arguments: submission_id, profile_name. Returns 0 if a terminal status was
+# obtained, 2 if the wait was given up; the submission is still Apple's to
+# finish then.
+wait_for_verdict() {
+    local dir="$(state_dir)"
+    local info="$dir/notary-info.json"
+    local started="$(/bin/date +%s)"
+    local polls=0
+    local reported=0
+    local unanswered=0
+    # Set inside the loop.
+    local status minutes
+    while [ "$polls" -lt "$notary_poll_limit" ]; do
+        "$xcrun_tool" notarytool info "$1" --keychain-profile "$2" --output-format json > "$info" 2> "$dir/notary-info.err"
+        status="$("$plister" get value "$info" /status 2>/dev/null)"
+        if [ -n "$status" ] && [ "$status" != "In Progress" ]; then
+            printf '%s' "$status" > "$dir/submission_status.txt"
+            append_log "Notary service status: $status (submission id $1)"
+            return 0
+        fi
+        polls=$((polls + 1))
+        minutes=$(( ($(/bin/date +%s) - started) / 60 ))
+        if [ -z "$status" ]; then
+            # Said once per run of failures, with notarytool's own words.
+            if [ "$unanswered" = "0" ]; then
+                append_log "The notary service did not answer a status request, trying again: $(/bin/cat "$dir/notary-info.err" 2>/dev/null)"
+            fi
+            unanswered=1
+            set_status "The notary service did not answer, trying again ($minutes min so far)..."
+        else
+            unanswered=0
+            set_status "Uploaded. Waiting for Apple's verdict ($minutes min so far)..."
+        fi
+        if [ "$minutes" -gt "$reported" ]; then
+            reported="$minutes"
+            append_log "No verdict after $minutes min, still waiting."
+        fi
+        /bin/sleep "$notary_poll_seconds"
+    done
+    append_log "No verdict after $minutes min, so the wait ends here. The submission is still with Apple and is not lost."
+    # A profile name may hold spaces or quotes, and this line is meant to be
+    # pasted into Terminal as it stands.
+    local profile_arg="'$(printf '%s' "$2" | /usr/bin/sed "s/'/'\\\\''/g")'"
+    append_log "Ask for its status in Terminal: xcrun notarytool info $1 --keychain-profile $profile_arg"
+    append_log "Once it reads Accepted, run Staple Ticket in this window."
+    return 2
 }
 
 # Print the stored submission id (empty if none).

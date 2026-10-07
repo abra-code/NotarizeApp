@@ -115,7 +115,12 @@ check "notarytool was asked to submit it" "yes" \
     "$(fake_arg xcrun "$(state_dir_path)/upload.zip" 1)"
 check "under the profile the picker resolved to" "notary-team" \
     "$(fake_arg_after xcrun --keychain-profile 1)"
-check "and told to wait for a terminal status" "yes" "$(fake_arg xcrun --wait 1)"
+check "without leaving the wait to notarytool" "no" "$(fake_arg xcrun --wait 1)"
+check "the log says where the working files are" "yes" \
+    "$(log_says "Working files of this window.*$(state_dir_path)")"
+check "that the upload finished, with its id" "yes" \
+    "$(log_says 'Upload complete. Submission id: 11111111-2222-3333-4444-555555555555')"
+check "and the verdict" "yes" "$(log_says 'Notary service status: Accepted')"
 check "the submission id was recorded for Fetch Log" \
     "11111111-2222-3333-4444-555555555555" "$(ntz_call submission_id)"
 
@@ -224,9 +229,50 @@ sign_world_ok "$app"
 notary_submit_fails
 omc_run Notarize.run
 check "the submit stage failed" "failed" "$(rail_state "$RAIL_SUBMIT_ID")"
-check "the log says no status came back" "yes" "$(log_says 'no status returned')"
+check "the log says the upload failed" "yes" "$(log_says 'the upload failed, no submission id')"
+check "the notary service was not asked about it" "0" "$(notary_status_requests)"
 check "the developer was told" "1" "$(alerts_mention 'Notarization submission failed')"
 check_window_is_idle "after a failed submission"
+
+section "a verdict that takes a while is waited for, and the wait is visible"
+app="$(make_app Slow.app)"
+arm_window "$app"
+sign_world_ok "$app"
+notary_submit_result Accepted
+notary_verdict_after 3
+omc_run Notarize.run
+check "the service was asked until it had a verdict" "4" "$(notary_status_requests)"
+check "the run went through" "done" "$(rail_state "$RAIL_VALIDATE_ID")"
+
+section "a status request that fails is tried again"
+app="$(make_app Flaky.app)"
+arm_window "$app"
+sign_world_ok "$app"
+notary_submit_result Accepted
+notary_verdict_after 2 silent
+omc_run Notarize.run
+check "the run went through all the same" "done" "$(rail_state "$RAIL_VALIDATE_ID")"
+check "the failure is in the log once, in notarytool's words" "1" \
+    "$(run_log | /usr/bin/grep -c 'did not answer a status request.*network connection was lost')"
+
+section "a verdict that never comes ends the wait and keeps the submission id"
+app="$(make_app Never.app)"
+arm_window "$app"
+sign_world_ok "$app"
+notary_submit_result Accepted
+notary_verdict_after 99
+omc_run Notarize.run
+check "the submit stage failed" "failed" "$(rail_state "$RAIL_SUBMIT_ID")"
+check "the service was asked as often as allowed" "5" "$(notary_status_requests)"
+check "the log says the submission is not lost" "yes" "$(log_says 'still with Apple and is not lost')"
+check "and how to ask about it later" "yes" \
+    "$(log_says "xcrun notarytool info 11111111-2222-3333-4444-555555555555 --keychain-profile 'notary-team'")"
+check "the id was kept" "11111111-2222-3333-4444-555555555555" "$(ntz_call submission_id)"
+check "the status line does not call it a failed submission" "No verdict from Apple yet. See the log." \
+    "$(ui_value "$STATUS_ID")"
+check "and neither does the alert" "1" "$(alerts_mention 'has not given a verdict yet')"
+check "which is the only one" "0" "$(alerts_mention 'submission failed')"
+check_window_is_idle "after a wait that was given up"
 
 section "stapling failure is reported, and the run stops there"
 app="$(make_app Staple.app)"
