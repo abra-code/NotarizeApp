@@ -3,3 +3,4 @@ Notarize.app/Contents/MacOS
 .DS_Store
 Private
 Notarize.app/Contents/_CodeSignature
+Notarize.app/Contents/Library/Packages
