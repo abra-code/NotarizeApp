@@ -408,6 +408,84 @@ check "the preflight passes trivially" "yes" "$(ntz_is preflight_nested_code "$s
 check "and the signer was never asked to enumerate it" "0" \
     "$(fake_calls codesign_applet.sh)"
 
+section "code that asks for the debugger entitlement is caught before the upload"
+reset_document
+# codesign writes the entitlements on one line; a hand-made file has line breaks.
+xcode_pair="$OMCTEST_WORK/xcode-pair.entitlements"
+printf '%s' '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.application-identifier</key><string></string><key>com.apple.security.get-task-allow</key><true/></dict></plist>' > "$xcode_pair"
+debug_off="$OMCTEST_WORK/debug-off.entitlements"
+printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0"><dict>' \
+    '<key>com.apple.security.get-task-allow</key>' '<false/>' \
+    '<key>com.apple.security.cs.allow-jit</key><true/>' '</dict></plist>' > "$debug_off"
+debug_lines="$OMCTEST_WORK/debug-lines.entitlements"
+printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<plist version="1.0">' '<dict>' \
+    '    <key>com.apple.security.get-task-allow</key>' '    <true/>' '</dict>' '</plist>' > "$debug_lines"
+
+dbg="$(make_app Debug.app com.example.debug)"
+/bin/mkdir -p "$dbg/Contents/Helpers"
+dbg_tool="$dbg/Contents/Helpers/debug-tool"
+dbg_lines="$dbg/Contents/Helpers/lines-tool"
+dbg_off="$dbg/Contents/Helpers/off-tool"
+dbg_plain="$dbg/Contents/Helpers/plain-tool"
+for tool_path in "$dbg_tool" "$dbg_lines" "$dbg_off" "$dbg_plain"; do printf 'x\n' > "$tool_path"; done
+listing_set "$dbg" "$dbg_tool" "$dbg_lines" "$dbg_off" "$dbg_plain"
+sig_set "$dbg"
+sig_set "$dbg_tool" --entitlements "$xcode_pair"
+sig_set "$dbg_lines" --entitlements "$debug_lines"
+sig_set "$dbg_off" --entitlements "$debug_off"
+sig_set "$dbg_plain"
+
+offenders="$(ntz_call list_debug_entitled_items "$dbg")"
+check "the tool Xcode built is listed" "1" \
+    "$(printf '%s\n' "$offenders" | /usr/bin/grep -c '^  Contents/Helpers/debug-tool$')"
+check "so is one whose entitlements have line breaks" "1" \
+    "$(printf '%s\n' "$offenders" | /usr/bin/grep -c 'lines-tool')"
+check "one with the entitlement set to false is not" "0" \
+    "$(printf '%s\n' "$offenders" | /usr/bin/grep -c 'off-tool')"
+check "nor one with no entitlements" "0" \
+    "$(printf '%s\n' "$offenders" | /usr/bin/grep -c 'plain-tool')"
+check "the preflight fails" "no" "$(ntz_is preflight_debug_entitlement "$dbg")"
+check "and names the entitlement in the log" "yes" \
+    "$(log_says 'Preflight FAILED: code that asks for the debugger entitlement (com.apple.security.get-task-allow)')"
+check "with what to do about it" "yes" "$(log_says 'only an archive (xcodebuild archive) leaves it out')"
+
+reset_document
+listing_set "$dbg" "$dbg_off" "$dbg_plain"
+sig_set "$dbg"
+check "a bundle without it passes" "yes" "$(ntz_is preflight_debug_entitlement "$dbg")"
+check "and says so" "yes" "$(log_says 'no code asks for the debugger entitlement')"
+
+reset_document
+listing_fails "$dbg"
+check "a bundle that cannot be enumerated fails" "no" "$(ntz_is preflight_debug_entitlement "$dbg")"
+check "and blames the walk" "yes" "$(log_says 'its entitlements cannot be checked')"
+
+reset_document
+check "a package passes trivially" "yes" "$(ntz_is preflight_debug_entitlement "$some_pkg")"
+
+section "sign_app does not carry the debugger entitlement over"
+reset_document
+jit_debug="$OMCTEST_WORK/jit-debug.entitlements"
+printf '%s' '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.cs.allow-jit</key><true/><key>com.apple.security.get-task-allow</key><true/></dict></plist>' > "$jit_debug"
+jit_app="$(make_app JitDebug.app com.example.jitdebug)"
+listing_set "$jit_app"
+sig_set "$jit_app" --entitlements "$jit_debug"
+check "signing succeeded" "yes" "$(ntz_is sign_app "$jit_app" "$IDENTITY" "")"
+check "the log says it was left out" "yes" "$(log_says 'It is not carried over')"
+check "the other entitlement is carried over" "yes" \
+    "$(log_says 'carrying over the entitlements already in the signature (1 keys)')"
+check "and the file handed to the signer no longer asks for it" "0" \
+    "$(/usr/bin/grep -c 'get-task-allow' "$(state_dir_path)/inherited.entitlements")"
+
+reset_document
+pair_app="$(make_app PairDebug.app com.example.pairdebug)"
+listing_set "$pair_app"
+sig_set "$pair_app" --entitlements "$xcode_pair"
+check "signing an app with only what Xcode added succeeded" "yes" \
+    "$(ntz_is sign_app "$pair_app" "$IDENTITY" "")"
+check "nothing is carried over then" "no" "$(log_says 'carrying over the entitlements')"
+check_absent "and no entitlements file is left for the signer" "$(state_dir_path)/inherited.entitlements"
+
 section "a Gatekeeper rejection is explained rather than left bare"
 reset_document
 rejected="$(make_app Rejected.app com.example.rejected)"

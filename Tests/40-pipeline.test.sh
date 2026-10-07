@@ -202,6 +202,33 @@ check "but the nested code was still walked" "yes" \
     "$(log_says 'Preflight: all nested code carries a certificate chain')"
 check "and the run went through" "done" "$(rail_state "$RAIL_VALIDATE_ID")"
 
+section "code asking for the debugger entitlement stops the run before the upload"
+# The helper is signed exactly as the window asks, so nothing is signed again
+# and the signer gets no chance to drop the entitlement: the case of a release
+# copy that was signed elsewhere.
+app="$(make_app DebugRun.app)"
+arm_window "$app"
+sign_world_ok "$app"
+debug_ent="$OMCTEST_WORK/debug-run.entitlements"
+printf '%s' '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.get-task-allow</key><true/></dict></plist>' > "$debug_ent"
+sig_set "$app/Contents/Helpers/tool" --entitlements "$debug_ent"
+omc_run Notarize.run
+check "the run stopped at the signing stage" "failed" "$(rail_state "$RAIL_SIGN_ID")"
+check "the alert says why it was not uploaded" "1" \
+    "$(alerts_mention 'asks for the debugger entitlement (get-task-allow)')"
+check "nothing was uploaded" "0" "$(fake_calls xcrun)"
+check "the submit stage was never reached" "pending" "$(rail_state "$RAIL_SUBMIT_ID")"
+check "and the log names the program" "yes" "$(log_says 'Contents/Helpers/tool$')"
+check_window_is_idle "after the entitlement preflight failed"
+
+section "a standalone submit makes the same check"
+omc_run Notarize.submit
+check "the submit stage failed" "failed" "$(rail_state "$RAIL_SUBMIT_ID")"
+check "nothing was uploaded" "0" "$(fake_calls xcrun)"
+check "the status line says it was not uploaded" \
+    "Some code asks for the debugger entitlement. Not uploaded." "$(ui_value "$STATUS_ID")"
+check_window_is_idle "after a standalone submit was stopped"
+
 section "a rejected notarization fetches the log and shows the issues"
 app="$(make_app Invalid.app)"
 arm_window "$app"

@@ -34,6 +34,16 @@ enable_view "$CANCEL_BTN_ID" 1
 show_progress 1
 clear_log
 rail_set "$RAIL_SUBMIT_ID" running
+# The notary service is certain to refuse code that asks for the debugger
+# entitlement, so it is not worth the upload.
+set_status "Checking entitlements..."
+preflight_debug_entitlement "$target"
+if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SUBMIT_ID" failed
+    set_status "Some code asks for the debugger entitlement. Not uploaded."
+    finish
+    exit 0
+fi
 set_status "Preparing the upload..."
 prepare_upload "$target"
 if [ "$?" != "0" ]; then

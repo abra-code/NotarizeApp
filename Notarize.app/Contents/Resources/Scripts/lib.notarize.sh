@@ -1470,7 +1470,33 @@ sign_app() {
         append_log "Entitlements: $entitlements ($(entitlement_count "$entitlements") keys)."
     else
         local inherited="$(state_dir)/inherited.entitlements"
+        local inherited_ok="no"
         if extract_entitlements "$app" "$inherited"; then
+            inherited_ok="yes"
+            # The debugger entitlement is not carried over: it is what Xcode
+            # adds to a plain build, never something a release needs, and the
+            # notary service refuses it. The empty application identifier Xcode
+            # adds with it goes too.
+            #
+            # plister's remove succeeds for a key that is not there, so "get
+            # type" is what says whether there is anything to remove.
+            "$plister" get type "$inherited" "/$debug_entitlement" >/dev/null 2>&1
+            if [ "$?" = "0" ]; then
+                "$plister" remove "$inherited" "/$debug_entitlement" >/dev/null 2>&1
+                append_log "Entitlements: the existing signature asks for the debugger entitlement (get-task-allow), which the notary service refuses. It is not carried over."
+                local app_id_key="/com.apple.application-identifier"
+                local app_id_type="$("$plister" get type "$inherited" "$app_id_key" 2>/dev/null)"
+                local app_id="$("$plister" get value "$inherited" "$app_id_key" 2>/dev/null)"
+                if [ "$app_id_type" = "string" ] && [ -z "$app_id" ]; then
+                    "$plister" remove "$inherited" "$app_id_key" >/dev/null 2>&1
+                fi
+                if [ "$(entitlement_count "$inherited")" = "0" ]; then
+                    /bin/rm -f "$inherited"
+                    inherited_ok="no"
+                fi
+            fi
+        fi
+        if [ "$inherited_ok" = "yes" ]; then
             entitlements="$inherited"
             append_log "Entitlements: none set in the window - carrying over the entitlements already in the signature ($(entitlement_count "$inherited") keys), which re-signing would otherwise drop."
         else
@@ -1634,6 +1660,65 @@ preflight_nested_code() {
     append_log "$offenders"
     append_log "Gatekeeper rejects the whole app when any nested item is ad-hoc signed or unsigned, even after notarization and stapling succeed."
     append_log "Sign the app with this window's Sign step (or Actions > Sign Only), which signs every nested item including non-code files in Contents/Helpers."
+    return 1
+}
+
+# The entitlement that lets a debugger attach to a program. Xcode adds it to
+# every plain build, in any configuration; only an archive leaves it out. The
+# notary service refuses any program that asks for it.
+debug_entitlement="com.apple.security.get-task-allow"
+
+# Print every code item whose signature asks for the debugger entitlement, one
+# indented line each. Prints nothing when none does. The enumeration is the
+# signer's own, as in list_uncertified_nested_items. It names the app's main
+# program, whose signature is the app's own, so the app itself is covered and
+# shows up as Contents/MacOS/<name>. Arguments: app_path
+list_debug_entitled_items() {
+    local app="$1"
+    local listing="$(state_dir)/preflight-debug-listing.txt"
+    /bin/rm -f "$listing"
+    "$codesign_applet" --list-code "$app" > "$listing" 2>/dev/null
+    local rc=$?
+    if [ "$rc" != "0" ] || [ ! -s "$listing" ]; then
+        printf '%s\n' "$nested_enum_failed"
+        return 0
+    fi
+    local item entitlements asked
+    while IFS= read -r item; do
+        [ -n "$item" ] || continue
+        entitlements="$("$codesign_tool" -d --entitlements - --xml "$item" 2>/dev/null)"
+        # codesign writes the XML on one line, but a file signed from a
+        # hand-made plist may come back with line breaks between key and value.
+        asked="$(printf '%s' "$entitlements" | /usr/bin/tr -d '[:space:]' | /usr/bin/grep -c -F "<key>$debug_entitlement</key><true/>")"
+        if [ "$asked" = "0" ]; then
+            continue
+        fi
+        printf '  %s\n' "${item#"$app"/}"
+    done < "$listing"
+}
+
+# Preflight what the notary service is certain to refuse and what a look at the
+# signatures shows at once: code that asks for the debugger entitlement.
+# Catching it here saves an upload and the wait for a verdict that can only be
+# "Invalid". Arguments: path
+# Returns 0 when no code asks for it, 1 otherwise.
+preflight_debug_entitlement() {
+    if [ "$(target_kind_of "$1")" = "pkg" ]; then
+        return 0
+    fi
+    local offenders="$(list_debug_entitled_items "$1")"
+    if [ -z "$offenders" ]; then
+        append_log "Preflight: no code asks for the debugger entitlement (get-task-allow)."
+        return 0
+    fi
+    if [ "$offenders" = "$nested_enum_failed" ]; then
+        append_log "Preflight FAILED: the bundle's contents could not be enumerated, so its entitlements cannot be checked. Check that the path is a readable app bundle."
+        return 1
+    fi
+    append_log "Preflight FAILED: code that asks for the debugger entitlement ($debug_entitlement):"
+    append_log "$offenders"
+    append_log "The notary service refuses any program that asks for it. Xcode adds it to every plain build, in any configuration; only an archive (xcodebuild archive) leaves it out."
+    append_log "Sign the app with this window's Sign step (or Actions > Sign Only), which leaves it out, or build the listed programs as an archive."
     return 1
 }
 

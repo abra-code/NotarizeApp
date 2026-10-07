@@ -25,6 +25,7 @@ else
     # The nested-code state is the clue a bare "rejected" from spctl withholds,
     # so state it outright rather than leaving it to be inferred.
     preflight_nested_code "$target"
+    preflight_debug_entitlement "$target"
 fi
 run_spctl "$target"
 append_log "Staple status:"

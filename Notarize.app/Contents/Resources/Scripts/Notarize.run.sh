@@ -167,6 +167,18 @@ if [ "$?" != "0" ]; then
     exit 0
 fi
 
+# 1c. Preflight the debugger entitlement, which the notary service is certain to
+# refuse. Like 1b it runs whether or not the signing step was skipped.
+set_status "Checking entitlements..."
+preflight_debug_entitlement "$work"
+if [ "$?" != "0" ]; then
+    rail_set "$RAIL_SIGN_ID" failed
+    set_status "Some code asks for the debugger entitlement."
+    "$alert_tool" --level stop --title "Notarize" "Some code asks for the debugger entitlement (get-task-allow). The notary service would refuse this app, so it was not uploaded. See the log."
+    finish
+    exit 0
+fi
+
 # 2. Prepare the upload. An app has to be zipped; the notary service takes a
 # flat package as it is.
 rail_set "$RAIL_SUBMIT_ID" running
