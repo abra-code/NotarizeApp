@@ -129,12 +129,17 @@ Everything that differs between an app and a package is decided by one function,
 
 ## Building and Signing
 
-The app runs as-is; it invokes system tools and bundles nothing to build. After changing scripts or UI JSON, re-sign the bundle so the signature stays valid:
+A clone of this repository holds only Notarize's own files: scripts, UI JSON, `Command.json` and resources. The OMC engine (the executable in `Contents/MacOS` and `Contents/Frameworks/Abracode.framework`) is not in the repository, so the bundle does not launch until AppletBuilder, part of [OMC](https://github.com/abra-code/OMC), has built it. Building installs the engine and signs the bundle; Notarize has no helper binaries of its own to compile.
+
+Open `Notarize.app` in AppletBuilder, pick a codesign identity in the **Build & Run** pane and press **Build**. Or use AppletBuilder's command-line tool:
 
 ```bash
-./codesign_applet.sh Notarize.app -                                    # ad-hoc (local use)
-./codesign_applet.sh Notarize.app "Developer ID Application: ..."       # for distribution
+AB="/path/to/AppletBuilder.app/Contents/Resources/Agents/appletbuilder"
+"$AB" build Notarize.app                                              # ad-hoc (local use)
+"$AB" build Notarize.app --identity "Developer ID Application: ..."    # for distribution
 ```
+
+Build again after changing scripts or UI JSON, so the signature stays valid.
 
 (And yes - you can notarize Notarize with itself.)
 
